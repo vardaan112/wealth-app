@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
@@ -145,6 +145,34 @@ pub async fn upsert_provider_connection(
     .bind(input.status)
     .fetch_one(pool)
     .await
+}
+
+/// Records a successful Plaid fetch through `sync_end_date` (ISO `YYYY-MM-DD`).
+/// The cursor drives incremental `/transactions/get` windows on subsequent syncs.
+pub async fn update_plaid_sync_cursor(
+    pool: &PgPool,
+    connection_id: Uuid,
+    sync_end_date: NaiveDate,
+) -> Result<(), sqlx::Error> {
+    let cursor = sync_end_date.format("%Y-%m-%d").to_string();
+
+    sqlx::query(
+        r#"
+        UPDATE provider_connections
+        SET
+            sync_cursor = $2,
+            last_synced_at = NOW(),
+            status = 'active',
+            updated_at = NOW()
+        WHERE id = $1
+        "#,
+    )
+    .bind(connection_id)
+    .bind(cursor)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn mark_connection_synced(

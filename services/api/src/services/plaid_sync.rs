@@ -1,23 +1,32 @@
 use std::collections::HashMap;
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDate, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::providers::{
     PlaidAccount, PlaidClient, PlaidTransaction, ProviderAccount, ProviderTransaction,
 };
+use crate::repositories::provider_connections::ProviderConnectionRecord;
 use crate::repositories::{provider_connections, raw_provider_events};
 use crate::security::encryption;
 use crate::services::provider_sync;
 
 type PlaidSyncError = Box<dyn std::error::Error + Send + Sync>;
 
+/// Initial backfill window for a brand-new Plaid connection.
+const INITIAL_SYNC_DAYS: i64 = 90;
+/// Overlap re-fetched on incremental syncs so pending→posted transitions update
+/// existing rows instead of leaving stale pending copies.
+const SYNC_OVERLAP_DAYS: i64 = 3;
+
 #[derive(Debug, Clone, Default)]
 pub struct PlaidSyncResult {
     pub connections_synced: i32,
     pub accounts_synced: i32,
     pub transactions_synced: i32,
+    pub transactions_inserted: i32,
+    pub transactions_updated: i32,
     pub pending_transactions_synced: i32,
     pub raw_events_stored: i32,
     pub errors: Vec<String>,
@@ -91,34 +100,50 @@ pub async fn sync_plaid_transactions(
             result.accounts_synced += 1;
         }
 
-        sync_transactions_for_connection(
+        let end_date = Utc::now().date_naive();
+        let fetch_failed = sync_transactions_for_connection(
             pool,
             user_id,
+            connection.id,
+            &connection,
             &plaid,
             &access_token,
             connection.provider_item_id.as_deref(),
+            end_date,
             &mut account_ids,
             &mut result,
         )
         .await?;
 
+        if fetch_failed {
+            let _ =
+                provider_connections::mark_connection_synced(pool, connection.id, "error", false)
+                    .await;
+            continue;
+        }
+
+        provider_connections::update_plaid_sync_cursor(pool, connection.id, end_date).await?;
         result.connections_synced += 1;
     }
 
     Ok(result)
 }
 
+/// Returns `true` when the Plaid transactions fetch failed and the sync cursor
+/// must not advance.
 async fn sync_transactions_for_connection(
     pool: &PgPool,
     user_id: Uuid,
+    connection_id: Uuid,
+    connection: &ProviderConnectionRecord,
     plaid: &PlaidClient,
     access_token: &str,
     provider_item_id: Option<&str>,
+    end_date: NaiveDate,
     account_ids: &mut HashMap<String, Uuid>,
     result: &mut PlaidSyncResult,
-) -> Result<(), PlaidSyncError> {
-    let end_date = Utc::now().date_naive();
-    let start_date = end_date - Duration::days(90);
+) -> Result<bool, PlaidSyncError> {
+    let start_date = plaid_transaction_fetch_start(connection, end_date);
     let count = 500;
     let mut offset = 0;
 
@@ -129,10 +154,10 @@ async fn sync_transactions_for_connection(
         {
             Ok(page) => page,
             Err(error) => {
-                result
-                    .errors
-                    .push(format!("Plaid transactions fetch failed: {error}"));
-                return Ok(());
+                result.errors.push(format!(
+                    "Plaid transactions fetch failed for connection {connection_id}: {error}"
+                ));
+                return Ok(true);
             }
         };
 
@@ -177,7 +202,7 @@ async fn sync_transactions_for_connection(
                 result.pending_transactions_synced += 1;
             }
 
-            provider_sync::upsert_provider_transaction(
+            let inserted = provider_sync::upsert_provider_transaction(
                 pool,
                 user_id,
                 account_id,
@@ -185,6 +210,11 @@ async fn sync_transactions_for_connection(
             )
             .await?;
             result.transactions_synced += 1;
+            if inserted {
+                result.transactions_inserted += 1;
+            } else {
+                result.transactions_updated += 1;
+            }
         }
 
         offset += transaction_count;
@@ -193,7 +223,27 @@ async fn sync_transactions_for_connection(
         }
     }
 
-    Ok(())
+    Ok(false)
+}
+
+/// Computes the Plaid `/transactions/get` start date for a connection.
+/// First sync uses [`INITIAL_SYNC_DAYS`]; later syncs resume from the stored
+/// cursor (or `last_synced_at`) minus [`SYNC_OVERLAP_DAYS`].
+fn plaid_transaction_fetch_start(
+    connection: &ProviderConnectionRecord,
+    end_date: NaiveDate,
+) -> NaiveDate {
+    if let Some(cursor) = connection.sync_cursor.as_deref() {
+        if let Ok(cursor_date) = NaiveDate::parse_from_str(cursor, "%Y-%m-%d") {
+            return cursor_date - Duration::days(SYNC_OVERLAP_DAYS);
+        }
+    }
+
+    if let Some(last_synced_at) = connection.last_synced_at {
+        return last_synced_at.date_naive() - Duration::days(SYNC_OVERLAP_DAYS);
+    }
+
+    end_date - Duration::days(INITIAL_SYNC_DAYS)
 }
 
 fn provider_account_from_plaid(account: PlaidAccount) -> ProviderAccount {
@@ -546,5 +596,181 @@ mod tests {
             Some("Restaurant")
         );
         assert_eq!(provider_transaction.transaction_type, "expense");
+    }
+
+    #[test]
+    fn first_sync_uses_initial_window() {
+        let end_date = NaiveDate::from_ymd_opt(2026, 6, 29).unwrap();
+        let connection = ProviderConnectionRecord {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            provider: "plaid".to_string(),
+            provider_item_id: None,
+            provider_user_id: None,
+            encrypted_access_token: None,
+            encrypted_refresh_token: None,
+            encrypted_user_secret: None,
+            sync_cursor: None,
+            status: "active".to_string(),
+            last_synced_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let start = plaid_transaction_fetch_start(&connection, end_date);
+        assert_eq!(start, end_date - Duration::days(INITIAL_SYNC_DAYS));
+    }
+
+    #[test]
+    fn incremental_sync_resumes_from_cursor_with_overlap() {
+        let end_date = NaiveDate::from_ymd_opt(2026, 6, 29).unwrap();
+        let connection = ProviderConnectionRecord {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            provider: "plaid".to_string(),
+            provider_item_id: None,
+            provider_user_id: None,
+            encrypted_access_token: None,
+            encrypted_refresh_token: None,
+            encrypted_user_secret: None,
+            sync_cursor: Some("2026-06-22".to_string()),
+            status: "active".to_string(),
+            last_synced_at: Some(Utc::now()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let start = plaid_transaction_fetch_start(&connection, end_date);
+        assert_eq!(start, NaiveDate::from_ymd_opt(2026, 6, 19).unwrap());
+    }
+
+    #[test]
+    fn incremental_sync_falls_back_to_last_synced_at() {
+        let end_date = NaiveDate::from_ymd_opt(2026, 6, 29).unwrap();
+        let last_synced_at = NaiveDate::from_ymd_opt(2026, 6, 20)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
+        let connection = ProviderConnectionRecord {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            provider: "plaid".to_string(),
+            provider_item_id: None,
+            provider_user_id: None,
+            encrypted_access_token: None,
+            encrypted_refresh_token: None,
+            encrypted_user_secret: None,
+            sync_cursor: None,
+            status: "active".to_string(),
+            last_synced_at: Some(last_synced_at),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let start = plaid_transaction_fetch_start(&connection, end_date);
+        assert_eq!(start, NaiveDate::from_ymd_opt(2026, 6, 17).unwrap());
+    }
+
+    #[test]
+    fn resync_with_empty_incoming_category_keeps_mapped_transfer() {
+        let first = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-1".to_string(),
+            amount: -711.81,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: None,
+            name: "Payment Thank You-Mobile".to_string(),
+            category: None,
+            personal_finance_category: None,
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+        assert_eq!(first.category_primary.as_deref(), Some("Transfer"));
+
+        let resync = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-1".to_string(),
+            amount: -711.81,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: None,
+            name: "Payment Thank You-Mobile".to_string(),
+            category: None,
+            personal_finance_category: None,
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+
+        assert_eq!(resync.transaction_type, "transfer");
+        assert_eq!(resync.category_primary.as_deref(), Some("Transfer"));
+        assert_eq!(
+            resync.category_detailed.as_deref(),
+            Some("Credit Card Payment")
+        );
+    }
+
+    #[test]
+    fn resync_with_new_plaid_category_updates_mapping() {
+        let resync = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-2".to_string(),
+            amount: -42.0,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: Some("Grocery".to_string()),
+            name: "Grocery".to_string(),
+            category: None,
+            personal_finance_category: Some(
+                crate::providers::plaid::PlaidPersonalFinanceCategory {
+                    primary: Some("FOOD_AND_DRINK".to_string()),
+                    detailed: Some("FOOD_AND_DRINK_GROCERIES".to_string()),
+                },
+            ),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+
+        assert_eq!(resync.category_primary.as_deref(), Some("Food and Drink"));
+        assert_eq!(resync.category_detailed.as_deref(), Some("Groceries"));
+    }
+
+    #[test]
+    fn resync_pending_to_posted_keeps_same_provider_transaction_id() {
+        let plaid_pending = PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-3".to_string(),
+            amount: -15.0,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: Some("Coffee".to_string()),
+            name: "Coffee Shop".to_string(),
+            category: None,
+            personal_finance_category: Some(
+                crate::providers::plaid::PlaidPersonalFinanceCategory {
+                    primary: Some("FOOD_AND_DRINK".to_string()),
+                    detailed: Some("FOOD_AND_DRINK_COFFEE".to_string()),
+                },
+            ),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 25).unwrap(),
+            authorized_date: None,
+            pending: true,
+        };
+        let pending = provider_transaction_from_plaid(plaid_pending.clone());
+        let posted = provider_transaction_from_plaid(PlaidTransaction {
+            pending: false,
+            ..plaid_pending
+        });
+
+        assert_eq!(
+            pending.external_transaction_id,
+            posted.external_transaction_id
+        );
+        assert!(pending.pending);
+        assert!(!posted.pending);
     }
 }
