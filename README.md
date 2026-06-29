@@ -37,10 +37,18 @@ cd services/api
 cp .env.example .env
 ```
 
-The default in `.env.example` matches Docker Compose:
+The default database URL in `.env.example` matches Docker Compose:
 
 ```
 DATABASE_URL=postgres://wealth_user:wealth_password@localhost:5432/wealth_app
+```
+
+Set a JWT secret and the single local app user in `services/api/.env`:
+
+```
+JWT_SECRET=change-this-long-random-secret
+APP_USER_EMAIL=you@example.com
+APP_USER_PASSWORD=change-this-password
 ```
 
 ### 3. Run migrations
@@ -92,5 +100,6 @@ Web app runs on `http://localhost:5173` and proxies `/graphql` and `/health` to 
 
 ## Notes
 
-- Auth, Plaid, SnapTrade, and business logic are not included yet.
+- The app uses simple single-user email/password auth with a JWT stored in browser session storage.
+- OAuth, Plaid, SnapTrade, and complex business logic are not included yet.
 - Provider-specific tables are not used; raw webhook/import payloads go in `raw_provider_events`.

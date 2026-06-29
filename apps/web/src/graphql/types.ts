@@ -131,3 +131,15 @@ export type CreateManualHoldingMutation = {
 export type ImportTransactionsCsvMutation = {
   importTransactionsCsv: CsvImportResult
 }
+
+export type LoginInput = {
+  email: string
+  password: string
+}
+
+export type LoginMutation = {
+  login: {
+    token: string
+    user: User
+  }
+}

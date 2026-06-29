@@ -3,11 +3,13 @@ import { AccountForm } from '../components/forms/AccountForm'
 import { CsvImportForm } from '../components/forms/CsvImportForm'
 import { Modal } from '../components/Modal'
 import { PlaceholderCard } from '../components/PlaceholderCard'
+import { useAuth } from '../auth/AuthContext'
 import { useAccounts } from '../hooks/useAccounts'
 import { useMonthlySummary } from '../hooks/useMonthlySummary'
 import { useTransactions } from '../hooks/useTransactions'
 
 export function SettingsPage() {
+  const { logout } = useAuth()
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false)
   const [accountsResult, refreshAccounts] = useAccounts()
   const [, refreshTransactions] = useTransactions()
@@ -73,6 +75,15 @@ export function SettingsPage() {
           title="Notifications"
           description="Alerts for bills and large transactions."
         />
+        <PlaceholderCard title="Session" description="Sign out of this browser.">
+          <button
+            type="button"
+            onClick={logout}
+            className="rounded-full border border-white/[0.08] px-4 py-2 text-sm text-muted hover:border-white/[0.16] hover:text-text"
+          >
+            Log out
+          </button>
+        </PlaceholderCard>
       </div>
       <section>
         <PlaceholderCard

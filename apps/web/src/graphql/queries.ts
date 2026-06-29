@@ -8,6 +8,19 @@ export const ME_QUERY = `
   }
 `
 
+export const LOGIN_MUTATION = `
+  mutation Login($input: LoginInput!) {
+    login(input: $input) {
+      token
+      user {
+        id
+        email
+        displayName
+      }
+    }
+  }
+`
+
 export const ACCOUNTS_QUERY = `
   query Accounts {
     accounts {

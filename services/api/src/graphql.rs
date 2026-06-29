@@ -4,10 +4,11 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::repositories;
+use crate::auth;
 use crate::repositories::accounts;
 use crate::repositories::holdings;
 use crate::repositories::transactions;
+use crate::repositories::users;
 use crate::services::csv_import;
 use crate::services::snapshots as snapshot_service;
 
@@ -26,6 +27,12 @@ struct User {
     email: String,
     #[graphql(name = "displayName")]
     display_name: String,
+}
+
+#[derive(SimpleObject, Clone)]
+struct AuthPayload {
+    token: String,
+    user: User,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -192,6 +199,13 @@ struct CsvImportInput {
     csv_text: String,
 }
 
+#[derive(InputObject)]
+struct LoginInput {
+    email: String,
+    password: String,
+}
+
+#[allow(dead_code)]
 fn mock_user() -> User {
     User {
         id: "user-001".into(),
@@ -200,6 +214,7 @@ fn mock_user() -> User {
     }
 }
 
+#[allow(dead_code)]
 fn mock_accounts() -> Vec<Account> {
     vec![
         Account {
@@ -241,6 +256,7 @@ fn mock_accounts() -> Vec<Account> {
     ]
 }
 
+#[allow(dead_code)]
 fn mock_transactions() -> Vec<Transaction> {
     vec![
         Transaction {
@@ -330,6 +346,7 @@ fn mock_transactions() -> Vec<Transaction> {
     ]
 }
 
+#[allow(dead_code)]
 fn mock_holdings() -> Vec<Holding> {
     vec![
         Holding {
@@ -395,6 +412,28 @@ fn account_from_record(record: accounts::AccountRecord) -> Account {
         },
         is_active: record.is_active,
     }
+}
+
+fn user_from_record(record: users::UserRecord) -> User {
+    User {
+        id: record.id.to_string(),
+        email: record.email,
+        display_name: record.display_name.unwrap_or_else(|| "Owner".to_string()),
+    }
+}
+
+fn user_from_current(user: auth::CurrentUser) -> User {
+    User {
+        id: user.id.to_string(),
+        email: user.email,
+        display_name: user.display_name.unwrap_or_else(|| "Owner".to_string()),
+    }
+}
+
+fn current_user(ctx: &Context<'_>) -> Result<auth::CurrentUser, async_graphql::Error> {
+    ctx.data_opt::<auth::CurrentUser>()
+        .cloned()
+        .ok_or_else(|| async_graphql::Error::new("unauthenticated"))
 }
 
 fn transaction_from_record(record: transactions::TransactionRecord) -> Transaction {
@@ -585,18 +624,14 @@ impl QueryRoot {
         Ok("connected".to_string())
     }
 
-    async fn me(&self) -> User {
-        mock_user()
+    async fn me(&self, ctx: &Context<'_>) -> Result<User, async_graphql::Error> {
+        Ok(user_from_current(current_user(ctx)?))
     }
 
     async fn accounts(&self, ctx: &Context<'_>) -> Result<Vec<Account>, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let records = accounts::list_accounts(pool, user_id).await?;
-
-        if records.is_empty() {
-            return Ok(mock_accounts());
-        }
 
         Ok(records.into_iter().map(account_from_record).collect())
     }
@@ -606,24 +641,16 @@ impl QueryRoot {
         ctx: &Context<'_>,
     ) -> Result<Vec<Transaction>, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let records = transactions::list_transactions(pool, user_id, None).await?;
-
-        if records.is_empty() {
-            return Ok(mock_transactions());
-        }
 
         Ok(records.into_iter().map(transaction_from_record).collect())
     }
 
     async fn holdings(&self, ctx: &Context<'_>) -> Result<Vec<Holding>, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let records = holdings::list_holdings(pool, user_id).await?;
-
-        if records.is_empty() {
-            return Ok(mock_holdings());
-        }
 
         Ok(records.into_iter().map(holding_from_record).collect())
     }
@@ -634,7 +661,7 @@ impl QueryRoot {
         month: String,
     ) -> Result<MonthlySummary, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let records = transactions::list_transactions(pool, user_id, Some(month.clone())).await?;
 
         Ok(calculate_monthly_summary(&month, &records))
@@ -645,7 +672,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
     ) -> Result<Vec<NetWorthPoint>, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let snapshots = snapshot_service::get_net_worth_timeline(pool, user_id).await?;
 
         Ok(snapshots
@@ -659,13 +686,39 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    async fn login(
+        &self,
+        ctx: &Context<'_>,
+        input: LoginInput,
+    ) -> Result<AuthPayload, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth_context = ctx.data::<auth::AuthContext>()?;
+        let Some(user) = users::find_user_by_email(pool, &input.email).await? else {
+            return Err(async_graphql::Error::new("invalid email or password"));
+        };
+        let Some(password_hash) = user.password_hash.as_deref() else {
+            return Err(async_graphql::Error::new("invalid email or password"));
+        };
+
+        if !auth::verify_password(password_hash, &input.password) {
+            return Err(async_graphql::Error::new("invalid email or password"));
+        }
+
+        let token = auth::create_token(&user, &auth_context.jwt_secret)?;
+
+        Ok(AuthPayload {
+            token,
+            user: user_from_record(user),
+        })
+    }
+
     async fn create_manual_account(
         &self,
         ctx: &Context<'_>,
         input: ManualAccountInput,
     ) -> Result<Account, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
 
         let account = accounts::create_account(
             pool,
@@ -691,7 +744,7 @@ impl MutationRoot {
         input: ManualTransactionInput,
     ) -> Result<Transaction, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let account_id = parse_uuid(&input.account_id, "accountId")?;
         let transaction_date = parse_date(&input.transaction_date, "transactionDate")?;
 
@@ -728,7 +781,7 @@ impl MutationRoot {
         #[graphql(name = "categoryDetailed")] category_detailed: Option<String>,
     ) -> Result<Transaction, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::dev_user_id();
+        let user_id = current_user(ctx)?.id;
         let transaction_id = parse_uuid(&id, "id")?;
 
         let Some(transaction) = transactions::update_transaction_category(
@@ -752,7 +805,7 @@ impl MutationRoot {
         input: ManualHoldingInput,
     ) -> Result<Holding, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let account_id = parse_uuid(&input.account_id, "accountId")?;
 
         let Some(holding) = holdings::upsert_holding(
@@ -786,7 +839,7 @@ impl MutationRoot {
         input: CsvImportInput,
     ) -> Result<CsvImportResult, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
-        let user_id = repositories::ensure_dev_user(pool).await?;
+        let user_id = current_user(ctx)?.id;
         let account_id = parse_uuid(&input.account_id, "accountId")?;
 
         let result = csv_import::import_transactions_csv(
@@ -804,9 +857,10 @@ impl MutationRoot {
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
-pub fn build_schema(pool: PgPool) -> AppSchema {
+pub fn build_schema(pool: PgPool, jwt_secret: String) -> AppSchema {
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(pool)
+        .data(auth::AuthContext { jwt_secret })
         .finish()
 }
 

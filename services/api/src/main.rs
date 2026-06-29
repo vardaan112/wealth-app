@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod db;
 mod graphql;
@@ -7,6 +8,7 @@ mod services;
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql::{Request, ServerError, Variables};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use axum::http::HeaderMap;
 use axum::{
     extract::{Query, State},
     response::{Html, IntoResponse, Response},
@@ -23,6 +25,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct AppState {
     schema: graphql::AppSchema,
     pool: sqlx::PgPool,
+    jwt_secret: String,
 }
 
 #[derive(Serialize)]
@@ -36,6 +39,7 @@ async fn health_handler() -> Json<HealthResponse> {
 
 async fn graphql_get_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let Some(query) = params.get("query") else {
@@ -63,11 +67,41 @@ async fn graphql_get_handler(
         }
     }
 
+    if let Some(user) = auth::user_from_authorization(
+        &state.pool,
+        &state.jwt_secret,
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok()),
+    )
+    .await
+    {
+        request = request.data(user);
+    }
+
     GraphQLResponse::from(state.schema.execute(request).await).into_response()
 }
 
-async fn graphql_handler(State(state): State<AppState>, req: GraphQLRequest) -> GraphQLResponse {
-    state.schema.execute(req.into_inner()).await.into()
+async fn graphql_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: GraphQLRequest,
+) -> GraphQLResponse {
+    let mut request = req.into_inner();
+
+    if let Some(user) = auth::user_from_authorization(
+        &state.pool,
+        &state.jwt_secret,
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok()),
+    )
+    .await
+    {
+        request = request.data(user);
+    }
+
+    state.schema.execute(request).await.into()
 }
 
 #[tokio::main]
@@ -90,9 +124,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
+    auth::seed_single_user(
+        &pool,
+        config.app_user_email.as_deref(),
+        config.app_user_password.as_deref(),
+    )
+    .await?;
     let state = AppState {
-        schema: graphql::build_schema(pool.clone()),
+        schema: graphql::build_schema(pool.clone(), config.jwt_secret.clone()),
         pool,
+        jwt_secret: config.jwt_secret,
     };
     tracing::info!("Connected to database (pool size: {})", state.pool.size());
 
