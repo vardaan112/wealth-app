@@ -77,6 +77,69 @@ impl SnapTradeClient {
         Ok(response.redirect_uri)
     }
 
+    pub async fn list_accounts(
+        &self,
+        user_id: &str,
+        user_secret: &str,
+    ) -> SnapTradeResult<SnapTradeAccountsResponse> {
+        let request = self.signed_get(
+            "/accounts",
+            vec![
+                ("userId", user_id.to_string()),
+                ("userSecret", user_secret.to_string()),
+            ],
+        )?;
+        let raw = ensure_success(request.send().await?)
+            .await?
+            .json::<Value>()
+            .await?;
+        let accounts = serde_json::from_value::<Vec<SnapTradeAccount>>(raw.clone())?;
+
+        Ok(SnapTradeAccountsResponse { accounts, raw })
+    }
+
+    pub async fn list_account_positions(
+        &self,
+        user_id: &str,
+        user_secret: &str,
+        account_id: &str,
+    ) -> SnapTradeResult<SnapTradePositionsResponse> {
+        let path = format!("/accounts/{account_id}/positions");
+        let request = self.signed_get(
+            &path,
+            vec![
+                ("userId", user_id.to_string()),
+                ("userSecret", user_secret.to_string()),
+            ],
+        )?;
+        let raw = ensure_success(request.send().await?)
+            .await?
+            .json::<Value>()
+            .await?;
+        let positions = serde_json::from_value::<Vec<SnapTradePosition>>(raw.clone())?;
+
+        Ok(SnapTradePositionsResponse { positions, raw })
+    }
+
+    fn signed_get(
+        &self,
+        path: &str,
+        query_pairs: Vec<(&str, String)>,
+    ) -> SnapTradeResult<reqwest::RequestBuilder> {
+        let timestamp = chrono::Utc::now().timestamp().to_string();
+        let query = query_string(
+            std::iter::once(("clientId", self.client_id.clone()))
+                .chain(query_pairs)
+                .chain(std::iter::once(("timestamp", timestamp))),
+        );
+        let signature = sign_request(path, &query, None, &self.consumer_key)?;
+
+        Ok(self
+            .http
+            .get(format!("{}{}?{}", self.base_url, path, query))
+            .header("Signature", signature))
+    }
+
     fn signed_post(
         &self,
         path: &str,
@@ -116,6 +179,89 @@ struct RegisterUserResponse {
 struct LoginResponse {
     #[serde(rename = "redirectURI")]
     redirect_uri: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapTradeAccountsResponse {
+    pub accounts: Vec<SnapTradeAccount>,
+    pub raw: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapTradePositionsResponse {
+    pub positions: Vec<SnapTradePosition>,
+    pub raw: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradeAccount {
+    pub id: String,
+    pub name: Option<String>,
+    pub number: Option<String>,
+    pub institution_name: Option<String>,
+    pub balance: Option<SnapTradeAccountBalance>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradeAccountBalance {
+    pub total: Option<SnapTradeAmount>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradeAmount {
+    pub amount: Option<f64>,
+    pub currency: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapTradeAccountBalanceCents {
+    pub balance_cents: i64,
+    pub currency: String,
+}
+
+impl SnapTradeAccount {
+    pub fn total_balance(&self) -> Option<SnapTradeAccountBalanceCents> {
+        let total = self.balance.as_ref()?.total.as_ref()?;
+        let amount = total.amount?;
+        Some(SnapTradeAccountBalanceCents {
+            balance_cents: (amount * 100.0).round() as i64,
+            currency: total.currency.clone().unwrap_or_else(|| "USD".to_string()),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradePosition {
+    pub symbol: Option<SnapTradePositionSymbol>,
+    pub units: Option<f64>,
+    pub price: Option<f64>,
+    pub average_purchase_price: Option<f64>,
+    pub currency: Option<SnapTradeCurrency>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradePositionSymbol {
+    pub symbol: Option<SnapTradeUniversalSymbol>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradeUniversalSymbol {
+    pub symbol: Option<String>,
+    pub raw_symbol: Option<String>,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub security_type: Option<SnapTradeSecurityType>,
+    pub currency: Option<SnapTradeCurrency>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradeSecurityType {
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SnapTradeCurrency {
+    pub code: Option<String>,
 }
 
 async fn ensure_success(response: reqwest::Response) -> SnapTradeResult<reqwest::Response> {

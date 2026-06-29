@@ -5,5 +5,5 @@ pub mod types;
 
 pub use mock::MockProvider;
 pub use plaid::{PlaidAccount, PlaidClient, PlaidTransaction};
-pub use snaptrade::SnapTradeClient;
+pub use snaptrade::{SnapTradeAccount, SnapTradeClient, SnapTradePosition};
 pub use types::*;

@@ -147,6 +147,35 @@ pub async fn upsert_provider_connection(
     .await
 }
 
+pub async fn mark_connection_synced(
+    pool: &PgPool,
+    connection_id: Uuid,
+    status: &str,
+    touch_last_synced: bool,
+) -> Result<(), sqlx::Error> {
+    let query = if touch_last_synced {
+        r#"
+        UPDATE provider_connections
+        SET status = $2, last_synced_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+        "#
+    } else {
+        r#"
+        UPDATE provider_connections
+        SET status = $2, updated_at = NOW()
+        WHERE id = $1
+        "#
+    };
+
+    sqlx::query(query)
+        .bind(connection_id)
+        .bind(status)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
 async fn update_provider_connection_by_item_id(
     pool: &PgPool,
     input: &UpsertProviderConnectionInput<'_>,

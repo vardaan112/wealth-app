@@ -203,7 +203,7 @@ pub(crate) async fn upsert_provider_transaction(
     Ok(())
 }
 
-async fn upsert_provider_holding(
+pub(crate) async fn upsert_provider_holding(
     pool: &PgPool,
     user_id: Uuid,
     account_id: Uuid,
@@ -318,7 +318,7 @@ async fn upsert_provider_investment_transaction(
     Ok(())
 }
 
-async fn upsert_provider_balance_snapshot(
+pub(crate) async fn upsert_provider_balance_snapshot(
     pool: &PgPool,
     user_id: Uuid,
     account_id: Uuid,

@@ -16,6 +16,7 @@ use crate::services::csv_import;
 use crate::services::plaid_sync;
 use crate::services::provider_sync;
 use crate::services::snapshots as snapshot_service;
+use crate::services::snaptrade_sync;
 
 const API_VERSION: &str = "0.1.0";
 
@@ -1140,16 +1141,11 @@ impl MutationRoot {
     ) -> Result<SyncResult, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
         let user_id = current_user(ctx)?.id;
-        let _ = provider_connections::find_provider_connection(pool, user_id, "snaptrade").await?;
+        let result = snaptrade_sync::sync_snaptrade_accounts(pool, user_id)
+            .await
+            .map_err(graphql_error)?;
 
-        Ok(SyncResult {
-            accounts_synced: 0,
-            transactions_synced: 0,
-            holdings_synced: 0,
-            investment_transactions_synced: 0,
-            balance_snapshots_synced: 0,
-            errors: Vec::new(),
-        })
+        Ok(sync_result_from_service(result))
     }
 }
 
