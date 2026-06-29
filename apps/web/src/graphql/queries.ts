@@ -158,6 +158,25 @@ export const SYNC_PLAID_TRANSACTIONS_MUTATION = `
   }
 `
 
+export const CREATE_SNAPTRADE_CONNECTION_URL_MUTATION = `
+  mutation CreateSnapTradeConnectionUrl {
+    createSnapTradeConnectionUrl
+  }
+`
+
+export const SYNC_SNAPTRADE_ACCOUNTS_MUTATION = `
+  mutation SyncSnapTradeAccounts {
+    syncSnapTradeAccounts {
+      accountsSynced
+      transactionsSynced
+      holdingsSynced
+      investmentTransactionsSynced
+      balanceSnapshotsSynced
+      errors
+    }
+  }
+`
+
 export const HOLDINGS_QUERY = `
   query Holdings {
     holdings {

@@ -7,11 +7,13 @@ import { PlaceholderCard } from '../components/PlaceholderCard'
 import { useAuth } from '../auth/AuthContext'
 import { useAccounts } from '../hooks/useAccounts'
 import { useCreatePlaidLinkToken } from '../hooks/useCreatePlaidLinkToken'
+import { useCreateSnapTradeConnectionUrl } from '../hooks/useCreateSnapTradeConnectionUrl'
 import { useExchangePlaidPublicToken } from '../hooks/useExchangePlaidPublicToken'
 import { useHoldings } from '../hooks/useHoldings'
 import { useMonthlySummary } from '../hooks/useMonthlySummary'
 import { useNetWorthTimeline } from '../hooks/useNetWorthTimeline'
 import { useSyncPlaidTransactions } from '../hooks/useSyncPlaidTransactions'
+import { useSyncSnapTradeAccounts } from '../hooks/useSyncSnapTradeAccounts'
 import { useTransactions } from '../hooks/useTransactions'
 import { useTriggerMockSync } from '../hooks/useTriggerMockSync'
 
@@ -43,6 +45,16 @@ export function SettingsPage() {
     'Connect a bank account with Plaid Link. Transactions will not sync yet.',
   )
   const [lastBankSyncAt, setLastBankSyncAt] = useState<string | null>(null)
+  const [snapTradeStatus, setSnapTradeStatus] = useState<
+    'idle' | 'opening' | 'opened' | 'syncing' | 'synced' | 'failed'
+  >('idle')
+  const [snapTradeMessage, setSnapTradeMessage] = useState(
+    'Connect Robinhood through SnapTrade, then return here and sync holdings.',
+  )
+  const [snapTradePortalUrl, setSnapTradePortalUrl] = useState<string | null>(null)
+  const [lastRobinhoodSyncAt, setLastRobinhoodSyncAt] = useState<string | null>(
+    null,
+  )
   const [accountsResult, refreshAccounts] = useAccounts()
   const [, refreshTransactions] = useTransactions()
   const [, refreshHoldings] = useHoldings()
@@ -53,15 +65,25 @@ export function SettingsPage() {
   const [exchangeResult, exchangePlaidPublicToken] =
     useExchangePlaidPublicToken()
   const [plaidSyncResult, syncPlaidTransactions] = useSyncPlaidTransactions()
+  const [snapTradeUrlResult, createSnapTradeConnectionUrl] =
+    useCreateSnapTradeConnectionUrl()
+  const [snapTradeSyncResult, syncSnapTradeAccounts] =
+    useSyncSnapTradeAccounts()
   const accounts = accountsResult.data?.accounts ?? []
   const synced = syncResult.data?.triggerMockSync
   const plaidSynced = plaidSyncResult.data?.syncPlaidTransactions
+  const snapTradeSynced = snapTradeSyncResult.data?.syncSnapTradeAccounts
   const plaidBusy =
     linkTokenResult.fetching ||
     exchangeResult.fetching ||
     plaidStatus === 'creating' ||
     plaidStatus === 'opening' ||
     plaidStatus === 'exchanging'
+  const snapTradeBusy =
+    snapTradeUrlResult.fetching ||
+    snapTradeSyncResult.fetching ||
+    snapTradeStatus === 'opening' ||
+    snapTradeStatus === 'syncing'
 
   const { open: openPlaid, ready: plaidReady } = usePlaidLink({
     token: plaidLinkToken,
@@ -144,6 +166,47 @@ export function SettingsPage() {
       refreshMonthlySummary({ requestPolicy: 'network-only' })
       refreshNetWorthTimeline({ requestPolicy: 'network-only' })
     }
+  }
+
+  async function handleConnectRobinhood() {
+    setSnapTradeStatus('opening')
+    setSnapTradeMessage('Creating a secure SnapTrade connection portal...')
+
+    const response = await createSnapTradeConnectionUrl({})
+    if (response.data?.createSnapTradeConnectionUrl && !response.error) {
+      const portalUrl = response.data.createSnapTradeConnectionUrl
+      setSnapTradePortalUrl(portalUrl)
+      window.open(portalUrl, '_blank', 'noopener,noreferrer')
+      setSnapTradeStatus('opened')
+      setSnapTradeMessage(
+        'SnapTrade opened in a new tab. After connecting Robinhood and returning here, click "Sync Robinhood".',
+      )
+      return
+    }
+
+    setSnapTradeStatus('failed')
+    setSnapTradeMessage(
+      response.error?.message ?? 'Could not create SnapTrade connection portal.',
+    )
+  }
+
+  async function handleSyncRobinhood() {
+    setSnapTradeStatus('syncing')
+    setSnapTradeMessage('Syncing Robinhood account data from SnapTrade...')
+
+    const response = await syncSnapTradeAccounts({})
+    if (response.data?.syncSnapTradeAccounts && !response.error) {
+      setLastRobinhoodSyncAt(new Date().toLocaleString())
+      setSnapTradeStatus('synced')
+      setSnapTradeMessage('Robinhood sync finished. Portfolio data has been refreshed.')
+      refreshAccounts({ requestPolicy: 'network-only' })
+      refreshHoldings({ requestPolicy: 'network-only' })
+      refreshNetWorthTimeline({ requestPolicy: 'network-only' })
+      return
+    }
+
+    setSnapTradeStatus('failed')
+    setSnapTradeMessage(response.error?.message ?? 'Could not sync Robinhood.')
   }
 
   return (
@@ -296,6 +359,114 @@ export function SettingsPage() {
           {plaidSynced?.errors.length ? (
             <ul className="mt-4 list-disc space-y-1 pl-4 text-sm text-red-300">
               {plaidSynced.errors.map((error) => (
+                <li key={error}>{error}</li>
+              ))}
+            </ul>
+          ) : null}
+        </PlaceholderCard>
+      </section>
+      <section>
+        <PlaceholderCard
+          title="Robinhood"
+          description="Connect Robinhood through SnapTrade. Sync is manual for now."
+          className="max-w-3xl"
+        >
+          <div className="flex flex-col gap-4 rounded-2xl border border-white/[0.06] bg-background/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">
+                SnapTrade portal
+              </p>
+              <p className="mt-1 text-sm text-text">
+                {snapTradeStatus === 'opened'
+                  ? 'Portal opened'
+                  : snapTradeStatus === 'synced'
+                    ? 'Synced'
+                    : snapTradeStatus === 'failed'
+                      ? 'Connection failed'
+                      : snapTradeBusy
+                        ? 'Working...'
+                        : 'Ready to connect'}
+              </p>
+              <p className="mt-1 max-w-xl text-xs leading-5 text-muted">
+                {snapTradeMessage}
+              </p>
+              {snapTradePortalUrl ? (
+                <a
+                  href={snapTradePortalUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex text-xs text-accent hover:text-accent/80"
+                >
+                  Reopen SnapTrade portal
+                </a>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={handleConnectRobinhood}
+              disabled={snapTradeBusy}
+              className="rounded-full bg-accent px-5 py-3 text-sm font-medium text-background hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {snapTradeUrlResult.fetching ? 'Opening...' : 'Connect Robinhood'}
+            </button>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">
+                Portfolio sync
+              </p>
+              <p className="mt-1 text-sm text-text">
+                {snapTradeSyncResult.fetching
+                  ? 'Syncing Robinhood...'
+                  : snapTradeSyncResult.error
+                    ? 'Sync failed'
+                    : snapTradeSynced
+                      ? 'Robinhood synced'
+                      : 'Run after connecting Robinhood'}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Last sync: {lastRobinhoodSyncAt ?? 'Not run in this browser session'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSyncRobinhood}
+              disabled={snapTradeBusy}
+              className="rounded-full border border-white/[0.08] px-5 py-3 text-sm text-muted hover:bg-white/[0.04] hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {snapTradeSyncResult.fetching ? 'Syncing...' : 'Sync Robinhood'}
+            </button>
+          </div>
+
+          {snapTradeSynced ? (
+            <div className="mt-4 grid gap-2 text-xs text-muted sm:grid-cols-5">
+              <SyncMetric label="Accounts" value={snapTradeSynced.accountsSynced} />
+              <SyncMetric label="Holdings" value={snapTradeSynced.holdingsSynced} />
+              <SyncMetric
+                label="Investments"
+                value={snapTradeSynced.investmentTransactionsSynced}
+              />
+              <SyncMetric label="Balances" value={snapTradeSynced.balanceSnapshotsSynced} />
+              <SyncMetric label="Errors" value={snapTradeSynced.errors.length} />
+            </div>
+          ) : null}
+
+          {snapTradeUrlResult.error ? (
+            <p className="mt-4 text-sm text-red-300">
+              {snapTradeUrlResult.error.message}
+            </p>
+          ) : null}
+
+          {snapTradeSyncResult.error ? (
+            <p className="mt-4 text-sm text-red-300">
+              {snapTradeSyncResult.error.message}
+            </p>
+          ) : null}
+
+          {snapTradeSynced?.errors.length ? (
+            <ul className="mt-4 list-disc space-y-1 pl-4 text-sm text-red-300">
+              {snapTradeSynced.errors.map((error) => (
                 <li key={error}>{error}</li>
               ))}
             </ul>

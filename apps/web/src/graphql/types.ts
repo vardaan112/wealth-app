@@ -166,6 +166,14 @@ export type SyncPlaidTransactionsMutation = {
   syncPlaidTransactions: PlaidSyncResult
 }
 
+export type CreateSnapTradeConnectionUrlMutation = {
+  createSnapTradeConnectionUrl: string
+}
+
+export type SyncSnapTradeAccountsMutation = {
+  syncSnapTradeAccounts: SyncResult
+}
+
 export type LoginInput = {
   email: string
   password: string
