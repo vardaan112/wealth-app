@@ -57,9 +57,12 @@ APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
 PLAID_CLIENT_ID=your-plaid-client-id
 PLAID_SECRET=your-plaid-secret
 PLAID_ENV=sandbox
+PLAID_REDIRECT_URI=http://localhost:5173/plaid-oauth
 SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
 SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
 ```
+
+`PLAID_REDIRECT_URI` is optional and defaults to `http://localhost:5173/plaid-oauth`. It is required for OAuth banks (see [Plaid OAuth banks](#plaid-oauth-banks-eg-chase) below).
 
 Generate `APP_ENCRYPTION_KEY` with:
 
@@ -121,6 +124,26 @@ Web app runs on `http://localhost:5173` and proxies `/graphql` and `/health` to 
    ```
 
 3. In the web app, go to `Settings > Connect Bank`, complete Plaid Link, then use `Sync Bank Transactions`.
+
+### Plaid OAuth banks (e.g. Chase)
+
+Some institutions—most notably Chase—require an OAuth redirect flow. Plaid relaunches Link after the user authenticates on the bank's site, redirecting back to a redirect URI you control.
+
+1. Register the redirect URI in the [Plaid Dashboard](https://dashboard.plaid.com/) under **Developers > API > Allowed redirect URIs**. By default the app uses:
+
+   ```
+   http://localhost:5173/plaid-oauth
+   ```
+
+   If you override `PLAID_REDIRECT_URI` in `services/api/.env`, register that exact URI instead. In Production the redirect URI must be HTTPS.
+
+2. (Optional) Set the redirect URI in `services/api/.env` and restart the API. If unset, it defaults to the URL above:
+
+   ```bash
+   PLAID_REDIRECT_URI=http://localhost:5173/plaid-oauth
+   ```
+
+3. Connect as usual from `Settings > Connect Bank`. For OAuth banks the browser redirects to `/plaid-oauth`, which resumes Link automatically and returns you to Settings once connected. The link token is persisted in `localStorage` so the flow survives the redirect's page reload.
 
 ### SnapTrade and Robinhood
 

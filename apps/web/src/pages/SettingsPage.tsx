@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
+import { useSearchParams } from 'react-router-dom'
 import { AccountForm } from '../components/forms/AccountForm'
 import { CsvImportForm } from '../components/forms/CsvImportForm'
 import { Modal } from '../components/Modal'
@@ -16,6 +17,10 @@ import { useSyncPlaidTransactions } from '../hooks/useSyncPlaidTransactions'
 import { useSyncSnapTradeAccounts } from '../hooks/useSyncSnapTradeAccounts'
 import { useTransactions } from '../hooks/useTransactions'
 import { useTriggerMockSync } from '../hooks/useTriggerMockSync'
+import {
+  clearSavedPlaidLinkToken,
+  savePlaidLinkToken,
+} from '../plaid/oauth'
 
 const mockProviders = [
   {
@@ -34,6 +39,7 @@ const mockProviders = [
 
 export function SettingsPage() {
   const { logout } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false)
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
   const [plaidLinkToken, setPlaidLinkToken] = useState<string | null>(null)
@@ -96,6 +102,7 @@ export function SettingsPage() {
         setPlaidStatus('connected')
         setPlaidMessage('Bank connected successfully. Transaction sync is not enabled yet.')
         setPlaidLinkToken(null)
+        clearSavedPlaidLinkToken()
         return
       }
 
@@ -125,6 +132,20 @@ export function SettingsPage() {
     setShouldOpenPlaid(false)
   }, [openPlaid, plaidReady, shouldOpenPlaid])
 
+  useEffect(() => {
+    if (searchParams.get('plaid') !== 'connected') {
+      return
+    }
+
+    setPlaidStatus('connected')
+    setPlaidMessage(
+      'Bank connected successfully via OAuth. Transaction sync is not enabled yet.',
+    )
+    const next = new URLSearchParams(searchParams)
+    next.delete('plaid')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
+
   async function handleMockSync() {
     const response = await triggerMockSync({})
 
@@ -144,7 +165,11 @@ export function SettingsPage() {
 
     const response = await createPlaidLinkToken({})
     if (response.data?.createPlaidLinkToken && !response.error) {
-      setPlaidLinkToken(response.data.createPlaidLinkToken)
+      const linkToken = response.data.createPlaidLinkToken
+      // Persist so OAuth banks (e.g. Chase) can resume Link after the
+      // redirect reloads the page on the /plaid-oauth return route.
+      savePlaidLinkToken(linkToken)
+      setPlaidLinkToken(linkToken)
       setShouldOpenPlaid(true)
       setPlaidStatus('opening')
       setPlaidMessage('Opening Plaid Link...')

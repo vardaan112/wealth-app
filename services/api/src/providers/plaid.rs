@@ -6,6 +6,8 @@ use uuid::Uuid;
 const PLAID_CLIENT_ID_ENV: &str = "PLAID_CLIENT_ID";
 const PLAID_SECRET_ENV: &str = "PLAID_SECRET";
 const PLAID_ENV_ENV: &str = "PLAID_ENV";
+const PLAID_REDIRECT_URI_ENV: &str = "PLAID_REDIRECT_URI";
+const DEFAULT_PLAID_REDIRECT_URI: &str = "http://localhost:5173/plaid-oauth";
 
 type PlaidResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -15,6 +17,7 @@ pub struct PlaidClient {
     client_id: String,
     secret: String,
     base_url: String,
+    redirect_uri: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,12 +81,14 @@ impl PlaidClient {
         let client_id = env_required(PLAID_CLIENT_ID_ENV)?;
         let secret = env_required(PLAID_SECRET_ENV)?;
         let plaid_env = std::env::var(PLAID_ENV_ENV).unwrap_or_else(|_| "sandbox".to_string());
+        let redirect_uri = plaid_redirect_uri();
 
         Ok(Self {
             http: reqwest::Client::new(),
             client_id,
             secret,
             base_url: plaid_base_url(&plaid_env)?,
+            redirect_uri,
         })
     }
 
@@ -98,6 +103,7 @@ impl PlaidClient {
             user: LinkTokenUser {
                 client_user_id: user_id.to_string(),
             },
+            redirect_uri: self.redirect_uri.as_deref(),
         };
 
         let response = self
@@ -210,6 +216,8 @@ struct LinkTokenCreateRequest<'a> {
     country_codes: Vec<&'a str>,
     products: Vec<&'a str>,
     user: LinkTokenUser,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirect_uri: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -302,6 +310,16 @@ fn env_required(name: &str) -> PlaidResult<String> {
     })
 }
 
+fn plaid_redirect_uri() -> Option<String> {
+    let value = std::env::var(PLAID_REDIRECT_URI_ENV)
+        .unwrap_or_else(|_| DEFAULT_PLAID_REDIRECT_URI.to_string());
+
+    match value.trim() {
+        "" => None,
+        trimmed => Some(trimmed.to_string()),
+    }
+}
+
 fn plaid_base_url(plaid_env: &str) -> PlaidResult<String> {
     match plaid_env {
         "sandbox" => Ok("https://sandbox.plaid.com".to_string()),
@@ -340,5 +358,40 @@ mod tests {
         let error = plaid_base_url("local").unwrap_err();
 
         assert!(error.to_string().contains("PLAID_ENV"));
+    }
+
+    #[test]
+    fn resolves_redirect_uri_from_env() {
+        // The default applies when unset, a custom value is used verbatim, and a
+        // blank value is omitted from the request. Kept in one test to avoid
+        // races on the shared environment variable across parallel tests.
+        // SAFETY: this is the only test touching PLAID_REDIRECT_URI.
+        unsafe {
+            std::env::remove_var(PLAID_REDIRECT_URI_ENV);
+        }
+        assert_eq!(
+            plaid_redirect_uri().as_deref(),
+            Some(DEFAULT_PLAID_REDIRECT_URI)
+        );
+
+        unsafe {
+            std::env::set_var(
+                PLAID_REDIRECT_URI_ENV,
+                "https://app.example.com/plaid-oauth",
+            );
+        }
+        assert_eq!(
+            plaid_redirect_uri().as_deref(),
+            Some("https://app.example.com/plaid-oauth")
+        );
+
+        unsafe {
+            std::env::set_var(PLAID_REDIRECT_URI_ENV, "   ");
+        }
+        assert_eq!(plaid_redirect_uri(), None);
+
+        unsafe {
+            std::env::remove_var(PLAID_REDIRECT_URI_ENV);
+        }
     }
 }

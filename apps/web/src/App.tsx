@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell'
 import { CashFlowPage } from './pages/CashFlowPage'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
+import { PlaidOAuthPage } from './pages/PlaidOAuthPage'
 import { PortfolioPage } from './pages/PortfolioPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TimelinePage } from './pages/TimelinePage'
@@ -19,6 +20,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="plaid-oauth" element={<PlaidOAuthPage />} />
         <Route element={<AppShell />}>
           <Route index element={<HomePage />} />
           <Route path="cash-flow" element={<CashFlowPage />} />
