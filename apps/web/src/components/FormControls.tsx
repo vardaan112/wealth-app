@@ -3,6 +3,7 @@ import type {
   InputHTMLAttributes,
   ReactNode,
   SelectHTMLAttributes,
+  TextareaHTMLAttributes,
 } from 'react'
 
 type FieldProps = {
@@ -43,6 +44,19 @@ export function SelectInput(props: SelectHTMLAttributes<HTMLSelectElement>) {
       className={[
         'w-full rounded-2xl border border-white/[0.07] bg-background/55 px-4 py-3 text-sm text-text outline-none',
         'focus:border-accent/45 focus:bg-background/80',
+        props.className ?? '',
+      ].join(' ')}
+    />
+  )
+}
+
+export function TextAreaInput(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      {...props}
+      className={[
+        'min-h-40 w-full rounded-2xl border border-white/[0.07] bg-background/55 px-4 py-3 text-sm text-text outline-none',
+        'placeholder:text-muted/55 focus:border-accent/45 focus:bg-background/80',
         props.className ?? '',
       ].join(' ')}
     />

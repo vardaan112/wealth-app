@@ -104,6 +104,18 @@ export type ManualHoldingInput = {
   currency?: string | null
 }
 
+export type CsvImportInput = {
+  accountId: string
+  source: string
+  csvText: string
+}
+
+export type CsvImportResult = {
+  importedCount: number
+  skippedCount: number
+  errors: string[]
+}
+
 export type CreateManualAccountMutation = {
   createManualAccount: Account
 }
@@ -114,4 +126,8 @@ export type CreateManualTransactionMutation = {
 
 export type CreateManualHoldingMutation = {
   createManualHolding: Holding
+}
+
+export type ImportTransactionsCsvMutation = {
+  importTransactionsCsv: CsvImportResult
 }

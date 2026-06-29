@@ -97,6 +97,16 @@ export const CREATE_MANUAL_HOLDING_MUTATION = `
   }
 `
 
+export const IMPORT_TRANSACTIONS_CSV_MUTATION = `
+  mutation ImportTransactionsCsv($input: CsvImportInput!) {
+    importTransactionsCsv(input: $input) {
+      importedCount
+      skippedCount
+      errors
+    }
+  }
+`
+
 export const HOLDINGS_QUERY = `
   query Holdings {
     holdings {

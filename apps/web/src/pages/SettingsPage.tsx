@@ -1,12 +1,17 @@
 import { useState } from 'react'
 import { AccountForm } from '../components/forms/AccountForm'
+import { CsvImportForm } from '../components/forms/CsvImportForm'
 import { Modal } from '../components/Modal'
 import { PlaceholderCard } from '../components/PlaceholderCard'
 import { useAccounts } from '../hooks/useAccounts'
+import { useMonthlySummary } from '../hooks/useMonthlySummary'
+import { useTransactions } from '../hooks/useTransactions'
 
 export function SettingsPage() {
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false)
   const [accountsResult, refreshAccounts] = useAccounts()
+  const [, refreshTransactions] = useTransactions()
+  const [, refreshMonthlySummary] = useMonthlySummary()
   const accounts = accountsResult.data?.accounts ?? []
 
   return (
@@ -69,6 +74,21 @@ export function SettingsPage() {
           description="Alerts for bills and large transactions."
         />
       </div>
+      <section>
+        <PlaceholderCard
+          title="Import Data"
+          description="Paste a simple CSV export to create transactions. No file upload yet."
+          className="max-w-3xl"
+        >
+          <CsvImportForm
+            accounts={accounts}
+            onImported={() => {
+              refreshTransactions({ requestPolicy: 'network-only' })
+              refreshMonthlySummary({ requestPolicy: 'network-only' })
+            }}
+          />
+        </PlaceholderCard>
+      </section>
       <Modal
         title="Add account"
         description="Create a manual account for transactions and holdings."
