@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod db;
 mod graphql;
+mod providers;
 mod repositories;
 mod security;
 mod services;

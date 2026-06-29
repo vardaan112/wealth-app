@@ -5,11 +5,13 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::auth;
+use crate::providers::MockProvider;
 use crate::repositories::accounts;
 use crate::repositories::holdings;
 use crate::repositories::transactions;
 use crate::repositories::users;
 use crate::services::csv_import;
+use crate::services::provider_sync;
 use crate::services::snapshots as snapshot_service;
 
 const API_VERSION: &str = "0.1.0";
@@ -136,6 +138,21 @@ struct CsvImportResult {
     imported_count: i32,
     #[graphql(name = "skippedCount")]
     skipped_count: i32,
+    errors: Vec<String>,
+}
+
+#[derive(SimpleObject, Clone)]
+struct SyncResult {
+    #[graphql(name = "accountsSynced")]
+    accounts_synced: i32,
+    #[graphql(name = "transactionsSynced")]
+    transactions_synced: i32,
+    #[graphql(name = "holdingsSynced")]
+    holdings_synced: i32,
+    #[graphql(name = "investmentTransactionsSynced")]
+    investment_transactions_synced: i32,
+    #[graphql(name = "balanceSnapshotsSynced")]
+    balance_snapshots_synced: i32,
     errors: Vec<String>,
 }
 
@@ -505,6 +522,17 @@ fn csv_import_result_from_service(result: csv_import::CsvImportResult) -> CsvImp
     }
 }
 
+fn sync_result_from_service(result: provider_sync::SyncResult) -> SyncResult {
+    SyncResult {
+        accounts_synced: result.accounts_synced,
+        transactions_synced: result.transactions_synced,
+        holdings_synced: result.holdings_synced,
+        investment_transactions_synced: result.investment_transactions_synced,
+        balance_snapshots_synced: result.balance_snapshots_synced,
+        errors: result.errors,
+    }
+}
+
 fn transaction_is_transfer(transaction: &transactions::TransactionRecord) -> bool {
     transaction
         .transaction_type
@@ -852,6 +880,18 @@ impl MutationRoot {
         .await?;
 
         Ok(csv_import_result_from_service(result))
+    }
+
+    async fn trigger_mock_sync(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<SyncResult, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let provider = MockProvider::new();
+        let result = provider_sync::sync_provider(pool, user_id, &provider).await?;
+
+        Ok(sync_result_from_service(result))
     }
 }
 
