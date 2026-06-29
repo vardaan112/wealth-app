@@ -3,14 +3,16 @@ mod db;
 mod graphql;
 
 use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
+use async_graphql::{Request, ServerError, Variables};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
-    extract::State,
-    response::Html,
+    extract::{Query, State},
+    response::{Html, IntoResponse, Response},
     routing::get,
     Json, Router,
 };
 use serde::Serialize;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -30,8 +32,36 @@ async fn health_handler() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn graphql_playground() -> Html<String> {
-    Html(playground_source(GraphQLPlaygroundConfig::new("/graphql")))
+async fn graphql_get_handler(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(query) = params.get("query") else {
+        return Html(playground_source(GraphQLPlaygroundConfig::new("/graphql"))).into_response();
+    };
+
+    let mut request = Request::new(query.clone());
+
+    if let Some(operation_name) = params.get("operationName") {
+        request = request.operation_name(operation_name.clone());
+    }
+
+    if let Some(variables) = params.get("variables") {
+        match serde_json::from_str::<serde_json::Value>(variables) {
+            Ok(value) => {
+                request = request.variables(Variables::from_json(value));
+            }
+            Err(e) => {
+                let response = async_graphql::Response::from_errors(vec![ServerError::new(
+                    format!("invalid GraphQL variables: {e}"),
+                    None,
+                )]);
+                return GraphQLResponse::from(response).into_response();
+            }
+        }
+    }
+
+    GraphQLResponse::from(state.schema.execute(request).await).into_response()
 }
 
 async fn graphql_handler(
@@ -81,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/health", get(health_handler))
-        .route("/graphql", get(graphql_playground).post(graphql_handler))
+        .route("/graphql", get(graphql_get_handler).post(graphql_handler))
         .layer(cors)
         .with_state(state);
 
