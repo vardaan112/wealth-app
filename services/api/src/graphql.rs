@@ -13,6 +13,7 @@ use crate::repositories::transactions;
 use crate::repositories::users;
 use crate::security::encryption;
 use crate::services::csv_import;
+use crate::services::plaid_sync;
 use crate::services::provider_sync;
 use crate::services::snapshots as snapshot_service;
 
@@ -155,6 +156,21 @@ struct SyncResult {
     investment_transactions_synced: i32,
     #[graphql(name = "balanceSnapshotsSynced")]
     balance_snapshots_synced: i32,
+    errors: Vec<String>,
+}
+
+#[derive(SimpleObject, Clone)]
+struct PlaidSyncResult {
+    #[graphql(name = "connectionsSynced")]
+    connections_synced: i32,
+    #[graphql(name = "accountsSynced")]
+    accounts_synced: i32,
+    #[graphql(name = "transactionsSynced")]
+    transactions_synced: i32,
+    #[graphql(name = "pendingTransactionsSynced")]
+    pending_transactions_synced: i32,
+    #[graphql(name = "rawEventsStored")]
+    raw_events_stored: i32,
     errors: Vec<String>,
 }
 
@@ -535,6 +551,17 @@ fn sync_result_from_service(result: provider_sync::SyncResult) -> SyncResult {
         holdings_synced: result.holdings_synced,
         investment_transactions_synced: result.investment_transactions_synced,
         balance_snapshots_synced: result.balance_snapshots_synced,
+        errors: result.errors,
+    }
+}
+
+fn plaid_sync_result_from_service(result: plaid_sync::PlaidSyncResult) -> PlaidSyncResult {
+    PlaidSyncResult {
+        connections_synced: result.connections_synced,
+        accounts_synced: result.accounts_synced,
+        transactions_synced: result.transactions_synced,
+        pending_transactions_synced: result.pending_transactions_synced,
+        raw_events_stored: result.raw_events_stored,
         errors: result.errors,
     }
 }
@@ -939,6 +966,19 @@ impl MutationRoot {
         .await?;
 
         Ok(true)
+    }
+
+    async fn sync_plaid_transactions(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<PlaidSyncResult, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let result = plaid_sync::sync_plaid_transactions(pool, user_id)
+            .await
+            .map_err(graphql_error)?;
+
+        Ok(plaid_sync_result_from_service(result))
     }
 }
 

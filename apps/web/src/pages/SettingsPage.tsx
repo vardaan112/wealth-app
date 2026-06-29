@@ -11,6 +11,7 @@ import { useExchangePlaidPublicToken } from '../hooks/useExchangePlaidPublicToke
 import { useHoldings } from '../hooks/useHoldings'
 import { useMonthlySummary } from '../hooks/useMonthlySummary'
 import { useNetWorthTimeline } from '../hooks/useNetWorthTimeline'
+import { useSyncPlaidTransactions } from '../hooks/useSyncPlaidTransactions'
 import { useTransactions } from '../hooks/useTransactions'
 import { useTriggerMockSync } from '../hooks/useTriggerMockSync'
 
@@ -41,6 +42,7 @@ export function SettingsPage() {
   const [plaidMessage, setPlaidMessage] = useState(
     'Connect a bank account with Plaid Link. Transactions will not sync yet.',
   )
+  const [lastBankSyncAt, setLastBankSyncAt] = useState<string | null>(null)
   const [accountsResult, refreshAccounts] = useAccounts()
   const [, refreshTransactions] = useTransactions()
   const [, refreshHoldings] = useHoldings()
@@ -50,8 +52,10 @@ export function SettingsPage() {
   const [linkTokenResult, createPlaidLinkToken] = useCreatePlaidLinkToken()
   const [exchangeResult, exchangePlaidPublicToken] =
     useExchangePlaidPublicToken()
+  const [plaidSyncResult, syncPlaidTransactions] = useSyncPlaidTransactions()
   const accounts = accountsResult.data?.accounts ?? []
   const synced = syncResult.data?.triggerMockSync
+  const plaidSynced = plaidSyncResult.data?.syncPlaidTransactions
   const plaidBusy =
     linkTokenResult.fetching ||
     exchangeResult.fetching ||
@@ -127,6 +131,19 @@ export function SettingsPage() {
 
     setPlaidStatus('failed')
     setPlaidMessage(response.error?.message ?? 'Could not create Plaid Link token.')
+  }
+
+  async function handleSyncBankTransactions() {
+    const response = await syncPlaidTransactions({})
+
+    if (response.data?.syncPlaidTransactions && !response.error) {
+      setLastBankSyncAt(new Date().toLocaleString())
+      refreshAccounts({ requestPolicy: 'network-only' })
+      refreshTransactions({ requestPolicy: 'network-only' })
+      refreshHoldings({ requestPolicy: 'network-only' })
+      refreshMonthlySummary({ requestPolicy: 'network-only' })
+      refreshNetWorthTimeline({ requestPolicy: 'network-only' })
+    }
   }
 
   return (
@@ -231,6 +248,58 @@ export function SettingsPage() {
               {plaidBusy ? 'Connecting...' : 'Connect Bank'}
             </button>
           </div>
+
+          <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">
+                Manual transaction sync
+              </p>
+              <p className="mt-1 text-sm text-text">
+                {plaidSyncResult.fetching
+                  ? 'Syncing bank transactions...'
+                  : plaidSyncResult.error
+                    ? 'Transaction sync failed'
+                    : plaidSynced
+                      ? 'Transactions synced'
+                      : 'Ready after connecting a bank'}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Last sync: {lastBankSyncAt ?? 'Not run in this browser session'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSyncBankTransactions}
+              disabled={plaidSyncResult.fetching}
+              className="rounded-full border border-white/[0.08] px-5 py-3 text-sm text-muted hover:bg-white/[0.04] hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {plaidSyncResult.fetching ? 'Syncing...' : 'Sync Bank Transactions'}
+            </button>
+          </div>
+
+          {plaidSynced ? (
+            <div className="mt-4 grid gap-2 text-xs text-muted sm:grid-cols-5">
+              <SyncMetric label="Connections" value={plaidSynced.connectionsSynced} />
+              <SyncMetric label="Accounts" value={plaidSynced.accountsSynced} />
+              <SyncMetric label="Transactions" value={plaidSynced.transactionsSynced} />
+              <SyncMetric label="Pending" value={plaidSynced.pendingTransactionsSynced} />
+              <SyncMetric label="Raw events" value={plaidSynced.rawEventsStored} />
+            </div>
+          ) : null}
+
+          {plaidSyncResult.error ? (
+            <p className="mt-4 text-sm text-red-300">
+              {plaidSyncResult.error.message}
+            </p>
+          ) : null}
+
+          {plaidSynced?.errors.length ? (
+            <ul className="mt-4 list-disc space-y-1 pl-4 text-sm text-red-300">
+              {plaidSynced.errors.map((error) => (
+                <li key={error}>{error}</li>
+              ))}
+            </ul>
+          ) : null}
         </PlaceholderCard>
       </section>
       <section>

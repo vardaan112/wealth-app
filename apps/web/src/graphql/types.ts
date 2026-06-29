@@ -125,6 +125,15 @@ export type SyncResult = {
   errors: string[]
 }
 
+export type PlaidSyncResult = {
+  connectionsSynced: number
+  accountsSynced: number
+  transactionsSynced: number
+  pendingTransactionsSynced: number
+  rawEventsStored: number
+  errors: string[]
+}
+
 export type CreateManualAccountMutation = {
   createManualAccount: Account
 }
@@ -151,6 +160,10 @@ export type CreatePlaidLinkTokenMutation = {
 
 export type ExchangePlaidPublicTokenMutation = {
   exchangePlaidPublicToken: boolean
+}
+
+export type SyncPlaidTransactionsMutation = {
+  syncPlaidTransactions: PlaidSyncResult
 }
 
 export type LoginInput = {

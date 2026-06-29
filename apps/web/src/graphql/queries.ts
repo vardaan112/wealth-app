@@ -145,6 +145,19 @@ export const EXCHANGE_PLAID_PUBLIC_TOKEN_MUTATION = `
   }
 `
 
+export const SYNC_PLAID_TRANSACTIONS_MUTATION = `
+  mutation SyncPlaidTransactions {
+    syncPlaidTransactions {
+      connectionsSynced
+      accountsSynced
+      transactionsSynced
+      pendingTransactionsSynced
+      rawEventsStored
+      errors
+    }
+  }
+`
+
 export const HOLDINGS_QUERY = `
   query Holdings {
     holdings {

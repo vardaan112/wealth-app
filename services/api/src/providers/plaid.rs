@@ -1,4 +1,6 @@
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 const PLAID_CLIENT_ID_ENV: &str = "PLAID_CLIENT_ID";
@@ -19,6 +21,56 @@ pub struct PlaidClient {
 pub struct PlaidTokenExchange {
     pub access_token: String,
     pub item_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaidAccount {
+    pub account_id: String,
+    pub balances: PlaidBalances,
+    pub mask: Option<String>,
+    pub name: String,
+    pub official_name: Option<String>,
+    #[serde(rename = "type")]
+    pub account_type: String,
+    pub subtype: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct PlaidBalances {
+    pub available: Option<f64>,
+    pub current: Option<f64>,
+    pub iso_currency_code: Option<String>,
+    pub unofficial_currency_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaidTransaction {
+    pub account_id: String,
+    pub transaction_id: String,
+    pub amount: f64,
+    pub iso_currency_code: Option<String>,
+    pub unofficial_currency_code: Option<String>,
+    pub merchant_name: Option<String>,
+    pub name: String,
+    pub category: Option<Vec<String>>,
+    pub date: NaiveDate,
+    pub authorized_date: Option<NaiveDate>,
+    pub pending: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaidAccountsGet {
+    pub accounts: Vec<PlaidAccount>,
+    pub raw: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaidTransactionsGet {
+    pub accounts: Vec<PlaidAccount>,
+    pub transactions: Vec<PlaidTransaction>,
+    pub total_transactions: i32,
+    pub raw: Value,
 }
 
 impl PlaidClient {
@@ -88,6 +140,65 @@ impl PlaidClient {
             item_id: response.item_id,
         })
     }
+
+    pub async fn get_accounts(&self, access_token: &str) -> PlaidResult<PlaidAccountsGet> {
+        let request = AccountsGetRequest {
+            client_id: &self.client_id,
+            secret: &self.secret,
+            access_token,
+        };
+
+        let raw = self.post_json("/accounts/get", &request).await?;
+        let response = serde_json::from_value::<AccountsGetResponse>(raw.clone())?;
+
+        Ok(PlaidAccountsGet {
+            accounts: response.accounts,
+            raw,
+        })
+    }
+
+    pub async fn get_transactions(
+        &self,
+        access_token: &str,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        count: i32,
+        offset: i32,
+    ) -> PlaidResult<PlaidTransactionsGet> {
+        let request = TransactionsGetRequest {
+            client_id: &self.client_id,
+            secret: &self.secret,
+            access_token,
+            start_date,
+            end_date,
+            options: TransactionsGetOptions { count, offset },
+        };
+
+        let raw = self.post_json("/transactions/get", &request).await?;
+        let response = serde_json::from_value::<TransactionsGetResponse>(raw.clone())?;
+
+        Ok(PlaidTransactionsGet {
+            accounts: response.accounts,
+            transactions: response.transactions,
+            total_transactions: response.total_transactions,
+            raw,
+        })
+    }
+
+    async fn post_json<T: Serialize>(&self, path: &str, request: &T) -> PlaidResult<Value> {
+        let response = self
+            .http
+            .post(format!("{}{}", self.base_url, path))
+            .json(request)
+            .send()
+            .await?;
+
+        ensure_success(response)
+            .await?
+            .json::<Value>()
+            .await
+            .map_err(|e| e.into())
+    }
 }
 
 #[derive(Serialize)]
@@ -122,6 +233,41 @@ struct PublicTokenExchangeRequest<'a> {
 struct PublicTokenExchangeResponse {
     access_token: String,
     item_id: String,
+}
+
+#[derive(Serialize)]
+struct AccountsGetRequest<'a> {
+    client_id: &'a str,
+    secret: &'a str,
+    access_token: &'a str,
+}
+
+#[derive(Deserialize)]
+struct AccountsGetResponse {
+    accounts: Vec<PlaidAccount>,
+}
+
+#[derive(Serialize)]
+struct TransactionsGetRequest<'a> {
+    client_id: &'a str,
+    secret: &'a str,
+    access_token: &'a str,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+    options: TransactionsGetOptions,
+}
+
+#[derive(Serialize)]
+struct TransactionsGetOptions {
+    count: i32,
+    offset: i32,
+}
+
+#[derive(Deserialize)]
+struct TransactionsGetResponse {
+    accounts: Vec<PlaidAccount>,
+    transactions: Vec<PlaidTransaction>,
+    total_transactions: i32,
 }
 
 #[derive(Deserialize)]

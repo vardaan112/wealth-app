@@ -94,7 +94,7 @@ pub async fn sync_provider<P: FinanceProvider>(
     Ok(result)
 }
 
-async fn upsert_provider_account(
+pub(crate) async fn upsert_provider_account(
     pool: &PgPool,
     user_id: Uuid,
     account: ProviderAccount,
@@ -142,7 +142,7 @@ async fn upsert_provider_account(
     ))
 }
 
-async fn upsert_provider_transaction(
+pub(crate) async fn upsert_provider_transaction(
     pool: &PgPool,
     user_id: Uuid,
     account_id: Uuid,

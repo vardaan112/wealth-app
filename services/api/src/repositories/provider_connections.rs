@@ -1,5 +1,47 @@
-use sqlx::PgPool;
+use chrono::{DateTime, Utc};
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, FromRow)]
+pub struct ProviderConnectionRecord {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub provider: String,
+    pub external_item_id: Option<String>,
+    pub encrypted_access_token: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+pub async fn list_provider_connections(
+    pool: &PgPool,
+    user_id: Uuid,
+    provider: &str,
+) -> Result<Vec<ProviderConnectionRecord>, sqlx::Error> {
+    sqlx::query_as::<_, ProviderConnectionRecord>(
+        r#"
+        SELECT
+            id,
+            user_id,
+            provider,
+            external_item_id,
+            encrypted_access_token,
+            status,
+            created_at,
+            updated_at
+        FROM provider_connections
+        WHERE user_id = $1
+          AND provider = $2
+          AND status = 'connected'
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(user_id)
+    .bind(provider)
+    .fetch_all(pool)
+    .await
+}
 
 pub async fn upsert_provider_connection(
     pool: &PgPool,
