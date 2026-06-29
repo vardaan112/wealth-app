@@ -80,14 +80,14 @@ impl PlaidClient {
     pub fn from_env() -> PlaidResult<Self> {
         let client_id = env_required(PLAID_CLIENT_ID_ENV)?;
         let secret = env_required(PLAID_SECRET_ENV)?;
-        let plaid_env = std::env::var(PLAID_ENV_ENV).unwrap_or_else(|_| "sandbox".to_string());
+        let plaid_env = std::env::var(PLAID_ENV_ENV).unwrap_or_default();
         let redirect_uri = plaid_redirect_uri();
 
         Ok(Self {
             http: reqwest::Client::new(),
             client_id,
             secret,
-            base_url: plaid_base_url(&plaid_env)?,
+            base_url: plaid_base_url(&plaid_env),
             redirect_uri,
         })
     }
@@ -305,9 +305,22 @@ async fn ensure_success(response: reqwest::Response) -> PlaidResult<reqwest::Res
 }
 
 fn env_required(name: &str) -> PlaidResult<String> {
-    std::env::var(name).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, format!("{name} must be set")).into()
-    })
+    let value = std::env::var(name).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, format!("{name} must be set"))
+    })?;
+
+    // Trim so a stray trailing newline/space in `.env` cannot corrupt the
+    // credential and trigger a misleading INVALID_API_KEYS from Plaid.
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{name} must be set"),
+        )
+        .into());
+    }
+
+    Ok(trimmed.to_string())
 }
 
 fn plaid_redirect_uri() -> Option<String> {
@@ -320,16 +333,15 @@ fn plaid_redirect_uri() -> Option<String> {
     }
 }
 
-fn plaid_base_url(plaid_env: &str) -> PlaidResult<String> {
-    match plaid_env {
-        "sandbox" => Ok("https://sandbox.plaid.com".to_string()),
-        "development" => Ok("https://development.plaid.com".to_string()),
-        "production" => Ok("https://production.plaid.com".to_string()),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "PLAID_ENV must be sandbox, development, or production",
-        )
-        .into()),
+fn plaid_base_url(plaid_env: &str) -> String {
+    // Plaid has two live environments: Sandbox and Production. The legacy
+    // `development` host was decommissioned (June 2024), so anything that is not
+    // explicitly `production` falls back to the safe Sandbox default. Matching is
+    // case-insensitive and whitespace-tolerant so `PLAID_ENV=production` always
+    // reaches https://production.plaid.com.
+    match plaid_env.trim().to_ascii_lowercase().as_str() {
+        "production" => "https://production.plaid.com".to_string(),
+        _ => "https://sandbox.plaid.com".to_string(),
     }
 }
 
@@ -339,25 +351,22 @@ mod tests {
 
     #[test]
     fn maps_supported_plaid_environments() {
+        assert_eq!(plaid_base_url("sandbox"), "https://sandbox.plaid.com");
+        assert_eq!(plaid_base_url("production"), "https://production.plaid.com");
+        // Case and surrounding whitespace are normalized so production
+        // credentials are never accidentally sent to the sandbox host.
         assert_eq!(
-            plaid_base_url("sandbox").unwrap(),
-            "https://sandbox.plaid.com"
-        );
-        assert_eq!(
-            plaid_base_url("development").unwrap(),
-            "https://development.plaid.com"
-        );
-        assert_eq!(
-            plaid_base_url("production").unwrap(),
+            plaid_base_url("  Production\n"),
             "https://production.plaid.com"
         );
     }
 
     #[test]
-    fn rejects_unknown_plaid_environment() {
-        let error = plaid_base_url("local").unwrap_err();
-
-        assert!(error.to_string().contains("PLAID_ENV"));
+    fn defaults_unknown_or_unset_plaid_environment_to_sandbox() {
+        assert_eq!(plaid_base_url(""), "https://sandbox.plaid.com");
+        assert_eq!(plaid_base_url("local"), "https://sandbox.plaid.com");
+        // `development` was decommissioned by Plaid; treat it as unknown.
+        assert_eq!(plaid_base_url("development"), "https://sandbox.plaid.com");
     }
 
     #[test]
