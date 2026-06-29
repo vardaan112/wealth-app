@@ -1,6 +1,7 @@
 use async_graphql::{Context, EmptySubscription, InputObject, Object, Schema, SimpleObject, ID};
 use chrono::NaiveDate;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::repositories;
@@ -104,6 +105,10 @@ struct MonthlySummary {
     savings_rate: f64,
     #[graphql(name = "categorySpend")]
     category_spend: Vec<CategorySpend>,
+    #[graphql(name = "transactionCount")]
+    transaction_count: i32,
+    #[graphql(name = "largestTransaction")]
+    largest_transaction: Option<Transaction>,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -346,79 +351,6 @@ fn mock_holdings() -> Vec<Holding> {
     ]
 }
 
-fn mock_category_spend() -> Vec<CategorySpend> {
-    vec![
-        CategorySpend {
-            category: "Housing".into(),
-            amount: Money {
-                amount_cents: 1_850_00,
-                currency: "USD".into(),
-            },
-            percent: 38.5,
-        },
-        CategorySpend {
-            category: "Groceries".into(),
-            amount: Money {
-                amount_cents: 520_00,
-                currency: "USD".into(),
-            },
-            percent: 10.8,
-        },
-        CategorySpend {
-            category: "Transportation".into(),
-            amount: Money {
-                amount_cents: 380_00,
-                currency: "USD".into(),
-            },
-            percent: 7.9,
-        },
-        CategorySpend {
-            category: "Entertainment".into(),
-            amount: Money {
-                amount_cents: 245_00,
-                currency: "USD".into(),
-            },
-            percent: 5.1,
-        },
-        CategorySpend {
-            category: "Shopping".into(),
-            amount: Money {
-                amount_cents: 410_00,
-                currency: "USD".into(),
-            },
-            percent: 8.5,
-        },
-        CategorySpend {
-            category: "Other".into(),
-            amount: Money {
-                amount_cents: 1_395_00,
-                currency: "USD".into(),
-            },
-            percent: 29.2,
-        },
-    ]
-}
-
-fn mock_monthly_summary(month: &str) -> MonthlySummary {
-    MonthlySummary {
-        month: month.to_string(),
-        income: Money {
-            amount_cents: 5_250_00,
-            currency: "USD".into(),
-        },
-        expenses: Money {
-            amount_cents: 4_800_00,
-            currency: "USD".into(),
-        },
-        net: Money {
-            amount_cents: 450_00,
-            currency: "USD".into(),
-        },
-        savings_rate: 8.57,
-        category_spend: mock_category_spend(),
-    }
-}
-
 fn mock_net_worth_timeline() -> Vec<NetWorthPoint> {
     vec![
         NetWorthPoint {
@@ -603,6 +535,108 @@ fn holding_from_record(record: holdings::HoldingRecord) -> Holding {
     }
 }
 
+fn transaction_is_transfer(transaction: &transactions::TransactionRecord) -> bool {
+    transaction
+        .transaction_type
+        .eq_ignore_ascii_case("transfer")
+}
+
+fn transaction_is_income(transaction: &transactions::TransactionRecord) -> bool {
+    transaction.amount_cents > 0 || transaction.transaction_type.eq_ignore_ascii_case("income")
+}
+
+fn transaction_is_spending(transaction: &transactions::TransactionRecord) -> bool {
+    transaction.amount_cents < 0 || transaction.transaction_type.eq_ignore_ascii_case("expense")
+}
+
+fn calculate_monthly_summary(
+    month: &str,
+    transactions: &[transactions::TransactionRecord],
+) -> MonthlySummary {
+    let included_transactions: Vec<&transactions::TransactionRecord> = transactions
+        .iter()
+        .filter(|transaction| !transaction_is_transfer(transaction))
+        .collect();
+
+    let income_cents = included_transactions
+        .iter()
+        .filter(|transaction| transaction_is_income(transaction))
+        .map(|transaction| transaction.amount_cents.abs())
+        .sum::<i64>();
+
+    let spending_cents = included_transactions
+        .iter()
+        .filter(|transaction| {
+            transaction_is_spending(transaction) && !transaction_is_income(transaction)
+        })
+        .map(|transaction| transaction.amount_cents.abs())
+        .sum::<i64>();
+
+    let mut category_totals = HashMap::<String, i64>::new();
+    for transaction in included_transactions.iter().filter(|transaction| {
+        transaction_is_spending(transaction) && !transaction_is_income(transaction)
+    }) {
+        let category = transaction
+            .category_primary
+            .clone()
+            .unwrap_or_else(|| "Uncategorized".to_string());
+        *category_totals.entry(category).or_default() += transaction.amount_cents.abs();
+    }
+
+    let mut category_spend = category_totals
+        .into_iter()
+        .map(|(category, amount_cents)| CategorySpend {
+            category,
+            amount: Money {
+                amount_cents,
+                currency: "USD".to_string(),
+            },
+            percent: if spending_cents > 0 {
+                amount_cents as f64 / spending_cents as f64 * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect::<Vec<_>>();
+    category_spend.sort_by(|a, b| {
+        b.amount
+            .amount_cents
+            .cmp(&a.amount.amount_cents)
+            .then_with(|| a.category.cmp(&b.category))
+    });
+
+    let largest_transaction = included_transactions
+        .iter()
+        .max_by_key(|transaction| transaction.amount_cents.abs())
+        .map(|transaction| transaction_from_record((*transaction).clone()));
+
+    let net_cents = income_cents - spending_cents;
+
+    MonthlySummary {
+        month: month.to_string(),
+        income: Money {
+            amount_cents: income_cents,
+            currency: "USD".to_string(),
+        },
+        expenses: Money {
+            amount_cents: spending_cents,
+            currency: "USD".to_string(),
+        },
+        net: Money {
+            amount_cents: net_cents,
+            currency: "USD".to_string(),
+        },
+        savings_rate: if income_cents > 0 {
+            net_cents as f64 / income_cents as f64 * 100.0
+        } else {
+            0.0
+        },
+        category_spend,
+        transaction_count: included_transactions.len() as i32,
+        largest_transaction,
+    }
+}
+
 pub struct QueryRoot;
 
 #[Object]
@@ -663,8 +697,16 @@ impl QueryRoot {
         Ok(records.into_iter().map(holding_from_record).collect())
     }
 
-    async fn monthly_summary(&self, month: String) -> MonthlySummary {
-        mock_monthly_summary(&month)
+    async fn monthly_summary(
+        &self,
+        ctx: &Context<'_>,
+        month: String,
+    ) -> Result<MonthlySummary, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let records = transactions::list_transactions(pool, user_id, Some(month.clone())).await?;
+
+        Ok(calculate_monthly_summary(&month, &records))
     }
 
     async fn net_worth_timeline(&self) -> Vec<NetWorthPoint> {
@@ -804,4 +846,95 @@ pub fn build_schema(pool: PgPool) -> AppSchema {
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(pool)
         .finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    fn transaction(
+        amount_cents: i64,
+        transaction_type: &str,
+        category_primary: Option<&str>,
+    ) -> transactions::TransactionRecord {
+        transactions::TransactionRecord {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            account_id: Uuid::new_v4(),
+            provider: "manual".to_string(),
+            provider_transaction_id: None,
+            amount_cents,
+            currency: "USD".to_string(),
+            merchant_name: Some("Test merchant".to_string()),
+            raw_description: None,
+            category_primary: category_primary.map(str::to_string),
+            category_detailed: None,
+            transaction_date: NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            authorized_date: None,
+            pending: false,
+            transaction_type: transaction_type.to_string(),
+            notes: None,
+            created_at: Utc.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap(),
+            updated_at: Utc.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn monthly_summary_calculates_income_spending_and_excludes_transfers() {
+        let transactions = vec![
+            transaction(500_00, "income", Some("Income")),
+            transaction(250_00, "other", Some("Refund")),
+            transaction(-125_00, "expense", Some("Dining")),
+            transaction(-75_00, "expense", Some("Groceries")),
+            transaction(-1_000_00, "transfer", Some("Transfer")),
+        ];
+
+        let summary = calculate_monthly_summary("2026-06", &transactions);
+
+        assert_eq!(summary.income.amount_cents, 750_00);
+        assert_eq!(summary.expenses.amount_cents, 200_00);
+        assert_eq!(summary.net.amount_cents, 550_00);
+        assert_eq!(summary.transaction_count, 4);
+        assert!((summary.savings_rate - 73.33333333333333).abs() < 0.0001);
+    }
+
+    #[test]
+    fn monthly_summary_returns_zero_values_for_no_transactions() {
+        let summary = calculate_monthly_summary("2026-06", &[]);
+
+        assert_eq!(summary.income.amount_cents, 0);
+        assert_eq!(summary.expenses.amount_cents, 0);
+        assert_eq!(summary.net.amount_cents, 0);
+        assert_eq!(summary.savings_rate, 0.0);
+        assert_eq!(summary.transaction_count, 0);
+        assert!(summary.category_spend.is_empty());
+        assert!(summary.largest_transaction.is_none());
+    }
+
+    #[test]
+    fn monthly_summary_sorts_spending_categories_and_tracks_largest_transaction() {
+        let transactions = vec![
+            transaction(-50_00, "expense", Some("Dining")),
+            transaction(-125_00, "expense", Some("Groceries")),
+            transaction(-75_00, "expense", Some("Dining")),
+            transaction(300_00, "income", Some("Income")),
+        ];
+
+        let summary = calculate_monthly_summary("2026-06", &transactions);
+
+        assert_eq!(summary.category_spend[0].category, "Dining");
+        assert_eq!(summary.category_spend[0].amount.amount_cents, 125_00);
+        assert_eq!(summary.category_spend[1].category, "Groceries");
+        assert_eq!(summary.category_spend[1].amount.amount_cents, 125_00);
+        assert_eq!(
+            summary
+                .largest_transaction
+                .as_ref()
+                .unwrap()
+                .amount
+                .amount_cents,
+            300_00
+        );
+    }
 }
