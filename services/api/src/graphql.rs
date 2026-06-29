@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::providers::{MockProvider, PlaidClient};
+use crate::providers::{MockProvider, PlaidClient, SnapTradeClient};
 use crate::repositories::accounts;
 use crate::repositories::holdings;
 use crate::repositories::provider_connections;
@@ -566,6 +566,46 @@ fn plaid_sync_result_from_service(result: plaid_sync::PlaidSyncResult) -> PlaidS
     }
 }
 
+async fn get_or_create_snaptrade_user(
+    pool: &PgPool,
+    user_id: Uuid,
+    client: &SnapTradeClient,
+) -> Result<(String, String), async_graphql::Error> {
+    if let Some(connection) =
+        provider_connections::find_provider_connection(pool, user_id, "snaptrade").await?
+    {
+        let Some(snaptrade_user_id) = connection.external_item_id else {
+            return Err(async_graphql::Error::new(
+                "SnapTrade connection is missing user id",
+            ));
+        };
+        let user_secret = encryption::decrypt_string(&connection.encrypted_access_token)
+            .map_err(graphql_error)?;
+
+        return Ok((snaptrade_user_id, user_secret));
+    }
+
+    let requested_user_id = user_id.to_string();
+    let snaptrade_user = client
+        .register_user(&requested_user_id)
+        .await
+        .map_err(graphql_error)?;
+    let encrypted_user_secret =
+        encryption::encrypt_string(&snaptrade_user.user_secret).map_err(graphql_error)?;
+
+    provider_connections::upsert_provider_connection(
+        pool,
+        user_id,
+        "snaptrade",
+        Some(&snaptrade_user.user_id),
+        &encrypted_user_secret,
+        "registered",
+    )
+    .await?;
+
+    Ok((snaptrade_user.user_id, snaptrade_user.user_secret))
+}
+
 fn transaction_is_transfer(transaction: &transactions::TransactionRecord) -> bool {
     transaction
         .transaction_type
@@ -979,6 +1019,53 @@ impl MutationRoot {
             .map_err(graphql_error)?;
 
         Ok(plaid_sync_result_from_service(result))
+    }
+
+    async fn create_snap_trade_user(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<bool, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let snaptrade = SnapTradeClient::from_env().map_err(graphql_error)?;
+
+        get_or_create_snaptrade_user(pool, user_id, &snaptrade).await?;
+
+        Ok(true)
+    }
+
+    async fn create_snap_trade_connection_url(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<String, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let snaptrade = SnapTradeClient::from_env().map_err(graphql_error)?;
+        let (snaptrade_user_id, user_secret) =
+            get_or_create_snaptrade_user(pool, user_id, &snaptrade).await?;
+
+        snaptrade
+            .create_connection_portal_url(&snaptrade_user_id, &user_secret)
+            .await
+            .map_err(graphql_error)
+    }
+
+    async fn sync_snap_trade_accounts(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<SyncResult, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let _ = provider_connections::find_provider_connection(pool, user_id, "snaptrade").await?;
+
+        Ok(SyncResult {
+            accounts_synced: 0,
+            transactions_synced: 0,
+            holdings_synced: 0,
+            investment_transactions_synced: 0,
+            balance_snapshots_synced: 0,
+            errors: Vec::new(),
+        })
     }
 }
 

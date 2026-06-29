@@ -43,6 +43,35 @@ pub async fn list_provider_connections(
     .await
 }
 
+pub async fn find_provider_connection(
+    pool: &PgPool,
+    user_id: Uuid,
+    provider: &str,
+) -> Result<Option<ProviderConnectionRecord>, sqlx::Error> {
+    sqlx::query_as::<_, ProviderConnectionRecord>(
+        r#"
+        SELECT
+            id,
+            user_id,
+            provider,
+            external_item_id,
+            encrypted_access_token,
+            status,
+            created_at,
+            updated_at
+        FROM provider_connections
+        WHERE user_id = $1
+          AND provider = $2
+        ORDER BY updated_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .bind(provider)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn upsert_provider_connection(
     pool: &PgPool,
     user_id: Uuid,

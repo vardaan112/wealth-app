@@ -53,6 +53,8 @@ APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
 PLAID_CLIENT_ID=your-plaid-client-id
 PLAID_SECRET=your-plaid-secret
 PLAID_ENV=sandbox
+SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
+SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
 ```
 
 Generate an encryption key with:
