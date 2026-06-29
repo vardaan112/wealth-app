@@ -8,6 +8,7 @@ use crate::repositories;
 use crate::repositories::accounts;
 use crate::repositories::holdings;
 use crate::repositories::transactions;
+use crate::services::snapshots as snapshot_service;
 
 const API_VERSION: &str = "0.1.0";
 
@@ -351,125 +352,6 @@ fn mock_holdings() -> Vec<Holding> {
     ]
 }
 
-fn mock_net_worth_timeline() -> Vec<NetWorthPoint> {
-    vec![
-        NetWorthPoint {
-            date: "2026-01-01".into(),
-            net_worth: Money {
-                amount_cents: 175_000_00,
-                currency: "USD".into(),
-            },
-            cash: Money {
-                amount_cents: 32_000_00,
-                currency: "USD".into(),
-            },
-            investments: Money {
-                amount_cents: 148_000_00,
-                currency: "USD".into(),
-            },
-            debt: Money {
-                amount_cents: 5_000_00,
-                currency: "USD".into(),
-            },
-        },
-        NetWorthPoint {
-            date: "2026-02-01".into(),
-            net_worth: Money {
-                amount_cents: 178_500_00,
-                currency: "USD".into(),
-            },
-            cash: Money {
-                amount_cents: 33_200_00,
-                currency: "USD".into(),
-            },
-            investments: Money {
-                amount_cents: 150_800_00,
-                currency: "USD".into(),
-            },
-            debt: Money {
-                amount_cents: 5_500_00,
-                currency: "USD".into(),
-            },
-        },
-        NetWorthPoint {
-            date: "2026-03-01".into(),
-            net_worth: Money {
-                amount_cents: 182_100_00,
-                currency: "USD".into(),
-            },
-            cash: Money {
-                amount_cents: 34_500_00,
-                currency: "USD".into(),
-            },
-            investments: Money {
-                amount_cents: 153_600_00,
-                currency: "USD".into(),
-            },
-            debt: Money {
-                amount_cents: 6_000_00,
-                currency: "USD".into(),
-            },
-        },
-        NetWorthPoint {
-            date: "2026-04-01".into(),
-            net_worth: Money {
-                amount_cents: 185_750_00,
-                currency: "USD".into(),
-            },
-            cash: Money {
-                amount_cents: 35_800_00,
-                currency: "USD".into(),
-            },
-            investments: Money {
-                amount_cents: 156_450_00,
-                currency: "USD".into(),
-            },
-            debt: Money {
-                amount_cents: 6_500_00,
-                currency: "USD".into(),
-            },
-        },
-        NetWorthPoint {
-            date: "2026-05-01".into(),
-            net_worth: Money {
-                amount_cents: 189_400_00,
-                currency: "USD".into(),
-            },
-            cash: Money {
-                amount_cents: 37_100_00,
-                currency: "USD".into(),
-            },
-            investments: Money {
-                amount_cents: 159_300_00,
-                currency: "USD".into(),
-            },
-            debt: Money {
-                amount_cents: 7_000_00,
-                currency: "USD".into(),
-            },
-        },
-        NetWorthPoint {
-            date: "2026-06-01".into(),
-            net_worth: Money {
-                amount_cents: 193_270_00,
-                currency: "USD".into(),
-            },
-            cash: Money {
-                amount_cents: 40_950_00,
-                currency: "USD".into(),
-            },
-            investments: Money {
-                amount_cents: 162_320_00,
-                currency: "USD".into(),
-            },
-            debt: Money {
-                amount_cents: 10_000_00,
-                currency: "USD".into(),
-            },
-        },
-    ]
-}
-
 fn parse_uuid(id: &ID, field: &str) -> Result<Uuid, async_graphql::Error> {
     Uuid::parse_str(id.as_str())
         .map_err(|e| async_graphql::Error::new(format!("invalid {field}: {e}")))
@@ -531,6 +413,28 @@ fn holding_from_record(record: holdings::HoldingRecord) -> Holding {
         market_value: Money {
             amount_cents: record.market_value_cents.unwrap_or_default(),
             currency: record.currency,
+        },
+    }
+}
+
+fn net_worth_point_from_snapshot(snapshot: snapshot_service::PortfolioSnapshot) -> NetWorthPoint {
+    NetWorthPoint {
+        date: snapshot.snapshot_date.to_string(),
+        net_worth: Money {
+            amount_cents: snapshot.net_worth_cents,
+            currency: snapshot.currency.clone(),
+        },
+        cash: Money {
+            amount_cents: snapshot.cash_cents,
+            currency: snapshot.currency.clone(),
+        },
+        investments: Money {
+            amount_cents: snapshot.investment_value_cents,
+            currency: snapshot.currency.clone(),
+        },
+        debt: Money {
+            amount_cents: snapshot.debt_cents,
+            currency: snapshot.currency,
         },
     }
 }
@@ -709,8 +613,18 @@ impl QueryRoot {
         Ok(calculate_monthly_summary(&month, &records))
     }
 
-    async fn net_worth_timeline(&self) -> Vec<NetWorthPoint> {
-        mock_net_worth_timeline()
+    async fn net_worth_timeline(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Vec<NetWorthPoint>, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let snapshots = snapshot_service::get_net_worth_timeline(pool, user_id).await?;
+
+        Ok(snapshots
+            .into_iter()
+            .map(net_worth_point_from_snapshot)
+            .collect())
     }
 }
 
