@@ -624,16 +624,43 @@ impl QueryRoot {
         mock_user()
     }
 
-    async fn accounts(&self) -> Vec<Account> {
-        mock_accounts()
+    async fn accounts(&self, ctx: &Context<'_>) -> Result<Vec<Account>, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let records = accounts::list_accounts(pool, user_id).await?;
+
+        if records.is_empty() {
+            return Ok(mock_accounts());
+        }
+
+        Ok(records.into_iter().map(account_from_record).collect())
     }
 
-    async fn transactions(&self) -> Vec<Transaction> {
-        mock_transactions()
+    async fn transactions(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Vec<Transaction>, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let records = transactions::list_transactions(pool, user_id, None).await?;
+
+        if records.is_empty() {
+            return Ok(mock_transactions());
+        }
+
+        Ok(records.into_iter().map(transaction_from_record).collect())
     }
 
-    async fn holdings(&self) -> Vec<Holding> {
-        mock_holdings()
+    async fn holdings(&self, ctx: &Context<'_>) -> Result<Vec<Holding>, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let records = holdings::list_holdings(pool, user_id).await?;
+
+        if records.is_empty() {
+            return Ok(mock_holdings());
+        }
+
+        Ok(records.into_iter().map(holding_from_record).collect())
     }
 
     async fn monthly_summary(&self, month: String) -> MonthlySummary {

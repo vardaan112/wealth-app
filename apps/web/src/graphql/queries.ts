@@ -36,9 +36,63 @@ export const TRANSACTIONS_QUERY = `
         currency
       }
       categoryPrimary
+      categoryDetailed
       transactionDate
       transactionType
       pending
+    }
+  }
+`
+
+export const CREATE_MANUAL_ACCOUNT_MUTATION = `
+  mutation CreateManualAccount($input: ManualAccountInput!) {
+    createManualAccount(input: $input) {
+      id
+      name
+      accountType
+      provider
+      currency
+      balance {
+        amountCents
+        currency
+      }
+      isActive
+    }
+  }
+`
+
+export const CREATE_MANUAL_TRANSACTION_MUTATION = `
+  mutation CreateManualTransaction($input: ManualTransactionInput!) {
+    createManualTransaction(input: $input) {
+      id
+      accountId
+      merchantName
+      amount {
+        amountCents
+        currency
+      }
+      categoryPrimary
+      categoryDetailed
+      transactionDate
+      transactionType
+      pending
+    }
+  }
+`
+
+export const CREATE_MANUAL_HOLDING_MUTATION = `
+  mutation CreateManualHolding($input: ManualHoldingInput!) {
+    createManualHolding(input: $input) {
+      id
+      accountId
+      symbol
+      assetName
+      assetType
+      quantity
+      marketValue {
+        amountCents
+        currency
+      }
     }
   }
 `

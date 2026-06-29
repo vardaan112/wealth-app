@@ -25,6 +25,7 @@ export type Transaction = {
   merchantName: string
   amount: Money
   categoryPrimary: string
+  categoryDetailed?: string | null
   transactionDate: string
   transactionType: string
   pending: boolean
@@ -69,3 +70,48 @@ export type TransactionsQuery = { transactions: Transaction[] }
 export type HoldingsQuery = { holdings: Holding[] }
 export type MonthlySummaryQuery = { monthlySummary: MonthlySummary }
 export type NetWorthTimelineQuery = { netWorthTimeline: NetWorthPoint[] }
+
+export type ManualAccountInput = {
+  name: string
+  accountType: string
+  provider?: string | null
+  currency?: string | null
+}
+
+export type ManualTransactionInput = {
+  accountId: string
+  amountCents: number
+  currency?: string | null
+  merchantName?: string | null
+  rawDescription?: string | null
+  categoryPrimary?: string | null
+  categoryDetailed?: string | null
+  transactionDate: string
+  pending?: boolean | null
+  transactionType?: string | null
+  notes?: string | null
+}
+
+export type ManualHoldingInput = {
+  accountId: string
+  symbol: string
+  assetName?: string | null
+  assetType?: string | null
+  quantity: number
+  marketValueCents?: number | null
+  costBasisCents?: number | null
+  priceCents?: number | null
+  currency?: string | null
+}
+
+export type CreateManualAccountMutation = {
+  createManualAccount: Account
+}
+
+export type CreateManualTransactionMutation = {
+  createManualTransaction: Transaction
+}
+
+export type CreateManualHoldingMutation = {
+  createManualHolding: Holding
+}
