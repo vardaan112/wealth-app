@@ -30,28 +30,17 @@ docker compose up -d
 
 Postgres runs on `localhost:5432` with user/password/database `wealth`.
 
-### 2. Run the API
+### 2. Set `DATABASE_URL`
 
 ```bash
 cd services/api
 cp .env.example .env
-cargo run
 ```
 
-API listens on `http://localhost:8080`.
+The default in `.env.example` matches Docker Compose:
 
-- Health: `GET /health`
-- GraphQL: `POST /graphql`
-
-Example query:
-
-```graphql
-query {
-  health {
-    status
-    database
-  }
-}
+```
+DATABASE_URL=postgres://wealth:wealth@localhost:5432/wealth
 ```
 
 ### 3. Run migrations
@@ -69,7 +58,29 @@ To verify tables were created:
 \dt
 ```
 
-### 4. Run the web app
+### 4. Start the Rust API
+
+```bash
+cd services/api
+cargo run
+```
+
+API listens on `http://localhost:8000`.
+
+- Health: `GET /health`
+- GraphQL playground: `GET /graphql`
+- GraphQL: `POST /graphql`
+
+Example query:
+
+```graphql
+query {
+  apiVersion
+  databaseStatus
+}
+```
+
+### 5. Run the web app
 
 ```bash
 cd apps/web
