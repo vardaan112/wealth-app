@@ -240,6 +240,14 @@ struct LoginInput {
     password: String,
 }
 
+#[derive(InputObject)]
+struct SignUpInput {
+    email: String,
+    password: String,
+    #[graphql(name = "displayName")]
+    display_name: Option<String>,
+}
+
 #[allow(dead_code)]
 fn mock_user() -> User {
     User {
@@ -469,6 +477,16 @@ fn current_user(ctx: &Context<'_>) -> Result<auth::CurrentUser, async_graphql::E
     ctx.data_opt::<auth::CurrentUser>()
         .cloned()
         .ok_or_else(|| async_graphql::Error::new("unauthenticated"))
+}
+
+fn is_unique_violation(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(database_error) => matches!(
+            database_error.kind(),
+            sqlx::error::ErrorKind::UniqueViolation
+        ),
+        _ => false,
+    }
 }
 
 fn graphql_error(error: impl std::fmt::Display) -> async_graphql::Error {
@@ -816,6 +834,55 @@ impl MutationRoot {
             return Err(async_graphql::Error::new("invalid email or password"));
         }
 
+        let token = auth::create_token(&user, &auth_context.jwt_secret)?;
+
+        Ok(AuthPayload {
+            token,
+            user: user_from_record(user),
+        })
+    }
+
+    async fn sign_up(
+        &self,
+        ctx: &Context<'_>,
+        input: SignUpInput,
+    ) -> Result<AuthPayload, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let auth_context = ctx.data::<auth::AuthContext>()?;
+        let email = input.email.trim().to_ascii_lowercase();
+        let display_name = input
+            .display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        if email.is_empty() {
+            return Err(async_graphql::Error::new("email is required"));
+        }
+
+        if input.password.chars().count() < 8 {
+            return Err(async_graphql::Error::new(
+                "password must be at least 8 characters",
+            ));
+        }
+
+        if users::find_user_by_email(pool, &email).await?.is_some() {
+            return Err(async_graphql::Error::new(
+                "an account with that email already exists",
+            ));
+        }
+
+        let password_hash = auth::hash_password(&input.password)
+            .map_err(|_| async_graphql::Error::new("could not create account"))?;
+        let user = match users::create_user(pool, &email, &password_hash, display_name).await {
+            Ok(user) => user,
+            Err(error) if is_unique_violation(&error) => {
+                return Err(async_graphql::Error::new(
+                    "an account with that email already exists",
+                ));
+            }
+            Err(_) => return Err(async_graphql::Error::new("could not create account")),
+        };
         let token = auth::create_token(&user, &auth_context.jwt_secret)?;
 
         Ok(AuthPayload {

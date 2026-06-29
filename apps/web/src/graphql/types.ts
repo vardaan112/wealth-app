@@ -179,8 +179,21 @@ export type LoginInput = {
   password: string
 }
 
+export type SignUpInput = {
+  email: string
+  password: string
+  displayName?: string | null
+}
+
 export type LoginMutation = {
   login: {
+    token: string
+    user: User
+  }
+}
+
+export type SignUpMutation = {
+  signUp: {
     token: string
     user: User
   }

@@ -20,7 +20,7 @@ wealth-app/
 
 ## Local development
 
-### 1. Start Postgres
+### 1. Start or reset Postgres
 
 From the repo root:
 
@@ -30,22 +30,26 @@ docker compose up -d
 
 Postgres runs on `localhost:5432` with user `wealth_user`, password `wealth_password`, and database `wealth_app`.
 
-### 2. Set `DATABASE_URL`
+Docker Compose mounts `./infra/migrations:/docker-entrypoint-initdb.d`, so migrations run automatically only when the Postgres volume is first created. After migration changes, reset the local DB from the repo root:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+That deletes the local Postgres volume and recreates it with all SQL files in `infra/migrations`.
+
+### 2. Configure the API environment
 
 ```bash
 cd services/api
 cp .env.example .env
 ```
 
-The default database URL in `.env.example` matches Docker Compose:
+The default `DATABASE_URL` in `.env.example` matches Docker Compose. Edit `services/api/.env` and set these backend-only values:
 
-```
+```bash
 DATABASE_URL=postgres://wealth_user:wealth_password@localhost:5432/wealth_app
-```
-
-Set a JWT secret and the single local app user in `services/api/.env`:
-
-```
 JWT_SECRET=change-this-long-random-secret
 APP_USER_EMAIL=you@example.com
 APP_USER_PASSWORD=change-this-password
@@ -57,28 +61,15 @@ SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
 SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
 ```
 
-Generate an encryption key with:
+Generate `APP_ENCRYPTION_KEY` with:
 
 ```bash
 openssl rand -base64 32
 ```
 
-### 3. Run migrations
+`APP_USER_EMAIL` and `APP_USER_PASSWORD` are optional local seed values. The app also supports signing up from the web login page. Do not put Plaid or SnapTrade secrets in frontend env files; the React app calls the Rust API, and the API talks to providers.
 
-The initial schema lives in `infra/migrations/0001_initial_schema.sql`, with follow-up migrations such as `infra/migrations/0002_provider_connections.sql`. Docker Compose mounts `./infra/migrations:/docker-entrypoint-initdb.d`, which runs SQL only on **first volume creation** (empty `postgres_data` volume). If you edit migrations after the database already exists, reset with:
-
-```bash
-docker compose down -v   # removes postgres_data volume
-docker compose up -d
-```
-
-To verify tables were created:
-
-```sql
-\dt
-```
-
-### 4. Start the Rust API
+### 3. Start the Rust API
 
 ```bash
 cd services/api
@@ -91,7 +82,7 @@ API listens on `http://localhost:8000`.
 - GraphQL playground: `GET /graphql`
 - GraphQL: `POST /graphql`
 
-Example query:
+Quick API check:
 
 ```graphql
 query {
@@ -100,7 +91,7 @@ query {
 }
 ```
 
-### 5. Run the web app
+### 4. Start the web app
 
 ```bash
 cd apps/web
@@ -110,8 +101,49 @@ npm run dev
 
 Web app runs on `http://localhost:5173` and proxies `/graphql` and `/health` to the API.
 
+## Provider Setup
+
+### Plaid sandbox
+
+1. Add these to `services/api/.env`:
+
+   ```bash
+   PLAID_CLIENT_ID=your-plaid-client-id
+   PLAID_SECRET=your-plaid-sandbox-secret
+   PLAID_ENV=sandbox
+   APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
+   ```
+
+2. Restart the Rust API from `services/api`:
+
+   ```bash
+   cargo run
+   ```
+
+3. In the web app, go to `Settings > Connect Bank`, complete Plaid Link, then use `Sync Bank Transactions`.
+
+### SnapTrade and Robinhood
+
+1. Add these to `services/api/.env`:
+
+   ```bash
+   SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
+   SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
+   APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
+   ```
+
+2. Restart the Rust API from `services/api`:
+
+   ```bash
+   cargo run
+   ```
+
+3. In the web app, go to `Settings > Connect Robinhood`, complete the SnapTrade portal, return to the app, then use `Sync Robinhood`.
+
+SnapTrade connection creation is wired and stores the provider user secret encrypted. The current `Sync Robinhood` path is still scaffolded and returns zero synced records until real SnapTrade account, holding, and transaction fetching is implemented.
+
 ## Notes
 
-- The app uses simple single-user email/password auth with a JWT stored in browser session storage.
-- OAuth, Plaid, SnapTrade, and complex business logic are not included yet.
-- Provider-specific tables are not used; raw webhook/import payloads go in `raw_provider_events`.
+- Auth uses email/password with argon2 password hashes and a JWT stored in browser session storage.
+- Plaid access tokens and SnapTrade user secrets are encrypted before storage with `APP_ENCRYPTION_KEY`.
+- Raw provider responses/events can be stored in `raw_provider_events` for debugging and auditability.

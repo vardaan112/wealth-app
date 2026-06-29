@@ -42,6 +42,26 @@ pub async fn find_user_by_id(pool: &PgPool, id: Uuid) -> Result<Option<UserRecor
     .await
 }
 
+pub async fn create_user(
+    pool: &PgPool,
+    email: &str,
+    password_hash: &str,
+    display_name: Option<&str>,
+) -> Result<UserRecord, sqlx::Error> {
+    sqlx::query_as::<_, UserRecord>(
+        r#"
+        INSERT INTO users (email, password_hash, display_name)
+        VALUES ($1, $2, $3)
+        RETURNING id, email, password_hash, display_name, created_at, updated_at
+        "#,
+    )
+    .bind(email)
+    .bind(password_hash)
+    .bind(display_name)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn upsert_single_user(
     pool: &PgPool,
     email: &str,

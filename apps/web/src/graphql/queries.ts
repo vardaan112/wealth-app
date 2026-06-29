@@ -21,6 +21,19 @@ export const LOGIN_MUTATION = `
   }
 `
 
+export const SIGN_UP_MUTATION = `
+  mutation SignUp($input: SignUpInput!) {
+    signUp(input: $input) {
+      token
+      user {
+        id
+        email
+        displayName
+      }
+    }
+  }
+`
+
 export const ACCOUNTS_QUERY = `
   query Accounts {
     accounts {
