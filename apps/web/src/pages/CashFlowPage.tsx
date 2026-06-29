@@ -1,13 +1,10 @@
 import {
   Area,
   AreaChart,
-  CartesianGrid,
   ResponsiveContainer,
   Tooltip,
   XAxis,
-  YAxis,
 } from 'recharts'
-import { PlaceholderCard } from '../components/PlaceholderCard'
 
 const chartData = [
   { month: 'Jan', income: 8200, expenses: 5400 },
@@ -20,55 +17,77 @@ const chartData = [
 
 export function CashFlowPage() {
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6">
+    <div className="animate-rise mx-auto flex max-w-5xl flex-col gap-8 pt-6">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Cash Flow</h1>
-        <p className="mt-1 text-sm text-muted">
+        <h1 className="text-3xl font-semibold tracking-[-0.04em]">Cash Flow</h1>
+        <p className="mt-2 text-sm text-muted">
           Income, expenses, and surplus over time.
         </p>
       </header>
-      <PlaceholderCard
-        title="Monthly trend"
-        description="Placeholder chart — connect to GraphQL later."
-      >
-        <div className="h-56 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData}>
-              <CartesianGrid stroke="#252B33" strokeDasharray="3 3" />
-              <XAxis dataKey="month" stroke="#8B95A5" fontSize={12} />
-              <YAxis stroke="#8B95A5" fontSize={12} tickFormatter={(v) => `$${v}`} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#101317',
-                  border: '1px solid #252B33',
-                  borderRadius: '8px',
-                  color: '#F4F6F8',
-                }}
-              />
-              <Area
-                type="monotone"
-                dataKey="income"
-                stroke="#7C9CFF"
-                fill="#7C9CFF"
-                fillOpacity={0.15}
-                strokeWidth={2}
-              />
-              <Area
-                type="monotone"
-                dataKey="expenses"
-                stroke="#8B95A5"
-                fill="#8B95A5"
-                fillOpacity={0.1}
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+      <div className="h-60 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 8, right: 0, bottom: 0, left: 0 }}>
+            <defs>
+              <linearGradient id="incomeFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#7c9cff" stopOpacity={0.28} />
+                <stop offset="100%" stopColor="#7c9cff" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="expensesFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#8b95a5" stopOpacity={0.18} />
+                <stop offset="100%" stopColor="#8b95a5" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="month"
+              stroke="#8B95A5"
+              fontSize={12}
+              tickLine={false}
+              axisLine={false}
+            />
+            <Tooltip
+              cursor={{ stroke: 'rgba(124,156,255,0.3)', strokeWidth: 1 }}
+              contentStyle={{
+                background: 'rgba(16,19,23,0.92)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 14,
+                fontSize: 12,
+                color: '#F4F6F8',
+                backdropFilter: 'blur(8px)',
+              }}
+            />
+            <Area
+              type="monotone"
+              dataKey="income"
+              stroke="#7C9CFF"
+              fill="url(#incomeFill)"
+              strokeWidth={2}
+            />
+            <Area
+              type="monotone"
+              dataKey="expenses"
+              stroke="#8B95A5"
+              fill="url(#expensesFill)"
+              strokeWidth={2}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="grid grid-cols-3 gap-x-6 border-t border-white/[0.06] pt-6">
+        <div>
+          <p className="text-[0.7rem] uppercase tracking-[0.16em] text-muted">Income</p>
+          <p className="mt-2 text-lg font-medium tracking-tight">$8,400</p>
+          <p className="text-xs text-muted">avg / month</p>
         </div>
-      </PlaceholderCard>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <PlaceholderCard title="Income" description="$8,400 avg / month" />
-        <PlaceholderCard title="Expenses" description="$5,333 avg / month" />
-        <PlaceholderCard title="Surplus" description="$3,067 avg / month" />
+        <div>
+          <p className="text-[0.7rem] uppercase tracking-[0.16em] text-muted">Expenses</p>
+          <p className="mt-2 text-lg font-medium tracking-tight">$5,333</p>
+          <p className="text-xs text-muted">avg / month</p>
+        </div>
+        <div>
+          <p className="text-[0.7rem] uppercase tracking-[0.16em] text-muted">Surplus</p>
+          <p className="mt-2 text-lg font-medium tracking-tight">$3,067</p>
+          <p className="text-xs text-muted">avg / month</p>
+        </div>
       </div>
     </div>
   )
