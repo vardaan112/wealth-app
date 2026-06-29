@@ -175,8 +175,16 @@ pub(crate) async fn upsert_provider_transaction(
             currency = EXCLUDED.currency,
             merchant_name = EXCLUDED.merchant_name,
             raw_description = EXCLUDED.raw_description,
-            category_primary = EXCLUDED.category_primary,
-            category_detailed = EXCLUDED.category_detailed,
+            category_primary = CASE
+                WHEN NULLIF(TRIM(transactions.category_primary), '') IS NOT NULL
+                    THEN transactions.category_primary
+                ELSE EXCLUDED.category_primary
+            END,
+            category_detailed = CASE
+                WHEN NULLIF(TRIM(transactions.category_detailed), '') IS NOT NULL
+                    THEN transactions.category_detailed
+                ELSE EXCLUDED.category_detailed
+            END,
             transaction_date = EXCLUDED.transaction_date,
             authorized_date = EXCLUDED.authorized_date,
             pending = EXCLUDED.pending,

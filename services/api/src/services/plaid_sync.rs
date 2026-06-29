@@ -219,14 +219,7 @@ fn provider_account_from_plaid(account: PlaidAccount) -> ProviderAccount {
 
 fn provider_transaction_from_plaid(transaction: PlaidTransaction) -> ProviderTransaction {
     let amount_cents = plaid_amount_to_cents(transaction.amount);
-    let category_primary = transaction
-        .category
-        .as_ref()
-        .and_then(|category| category.first().cloned());
-    let category_detailed = transaction
-        .category
-        .as_ref()
-        .and_then(|category| category.get(1).cloned());
+    let (category_primary, category_detailed) = plaid_transaction_categories(&transaction);
 
     ProviderTransaction {
         provider: "plaid".to_string(),
@@ -251,6 +244,83 @@ fn provider_transaction_from_plaid(transaction: PlaidTransaction) -> ProviderTra
     }
 }
 
+fn plaid_transaction_categories(
+    transaction: &PlaidTransaction,
+) -> (Option<String>, Option<String>) {
+    if let Some(personal_finance_category) = &transaction.personal_finance_category {
+        let primary = personal_finance_category
+            .primary
+            .as_deref()
+            .and_then(format_plaid_category_label);
+        if let Some(primary_category) = primary {
+            let detailed = personal_finance_category
+                .detailed
+                .as_deref()
+                .and_then(|detailed| {
+                    personal_finance_category
+                        .primary
+                        .as_deref()
+                        .and_then(|raw_primary| {
+                            let prefix = format!("{raw_primary}_");
+                            detailed.strip_prefix(&prefix)
+                        })
+                        .or(Some(detailed))
+                })
+                .and_then(format_plaid_category_label);
+
+            return (Some(primary_category), detailed);
+        }
+    }
+
+    let category_primary = transaction.category.as_ref().and_then(|category| {
+        category
+            .first()
+            .and_then(|value| non_empty_string(value.as_str()))
+    });
+    let category_detailed = transaction.category.as_ref().and_then(|category| {
+        category
+            .get(1)
+            .and_then(|value| non_empty_string(value.as_str()))
+    });
+
+    (category_primary, category_detailed)
+}
+
+fn format_plaid_category_label(value: &str) -> Option<String> {
+    let words = value
+        .trim()
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let lower = word.to_ascii_lowercase();
+            if lower == "and" {
+                return lower;
+            }
+
+            let mut chars = lower.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if words.is_empty() {
+        None
+    } else {
+        Some(words.join(" "))
+    }
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 fn plaid_amount_to_cents(amount: f64) -> i64 {
     (-amount * 100.0).round() as i64
 }
@@ -271,10 +341,11 @@ fn normalize_plaid_account_type(account_type: &str, subtype: Option<&str>) -> St
 fn normalize_plaid_transaction_type(amount_cents: i64, category_primary: Option<&str>) -> String {
     let category = category_primary.unwrap_or_default().to_lowercase();
 
-    if category.contains("transfer") {
+    if category.contains("transfer")
+        || category.contains("payment")
+        || category.contains("loan disbursement")
+    {
         "transfer"
-    } else if category.contains("payment") {
-        "payment"
     } else if category.contains("fee") {
         "fee"
     } else if category.contains("interest") {
@@ -331,5 +402,51 @@ mod tests {
             normalize_plaid_transaction_type(-1000, Some("Transfer")),
             "transfer"
         );
+        assert_eq!(
+            normalize_plaid_transaction_type(-1000, Some("Loan Payments")),
+            "transfer"
+        );
+        assert_eq!(
+            normalize_plaid_transaction_type(1000, Some("Loan Disbursements")),
+            "transfer"
+        );
+    }
+
+    #[test]
+    fn plaid_personal_finance_categories_are_preferred_and_formatted() {
+        let transaction = PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-1".to_string(),
+            amount: 12.34,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: Some("Restaurant".to_string()),
+            name: "Restaurant".to_string(),
+            category: Some(vec![
+                "Legacy Primary".to_string(),
+                "Legacy Detailed".to_string(),
+            ]),
+            personal_finance_category: Some(
+                crate::providers::plaid::PlaidPersonalFinanceCategory {
+                    primary: Some("FOOD_AND_DRINK".to_string()),
+                    detailed: Some("FOOD_AND_DRINK_RESTAURANT".to_string()),
+                },
+            ),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            authorized_date: None,
+            pending: false,
+        };
+
+        let provider_transaction = provider_transaction_from_plaid(transaction);
+
+        assert_eq!(
+            provider_transaction.category_primary.as_deref(),
+            Some("Food and Drink")
+        );
+        assert_eq!(
+            provider_transaction.category_detailed.as_deref(),
+            Some("Restaurant")
+        );
+        assert_eq!(provider_transaction.transaction_type, "expense");
     }
 }

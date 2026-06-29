@@ -57,9 +57,16 @@ pub struct PlaidTransaction {
     pub merchant_name: Option<String>,
     pub name: String,
     pub category: Option<Vec<String>>,
+    pub personal_finance_category: Option<PlaidPersonalFinanceCategory>,
     pub date: NaiveDate,
     pub authorized_date: Option<NaiveDate>,
     pub pending: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaidPersonalFinanceCategory {
+    pub primary: Option<String>,
+    pub detailed: Option<String>,
 }
 
 #[derive(Debug, Clone)]
