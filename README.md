@@ -64,6 +64,10 @@ SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
 
 `PLAID_REDIRECT_URI` is optional and defaults to `http://localhost:5173/plaid-oauth`. It is required for OAuth banks (see [Plaid OAuth banks](#plaid-oauth-banks-eg-chase) below).
 
+Plaid and SnapTrade credentials are separate. Plaid uses `PLAID_CLIENT_ID` and
+`PLAID_SECRET`; it does not use a consumer key. SnapTrade uses
+`SNAPTRADE_CLIENT_ID` and `SNAPTRADE_CONSUMER_KEY`.
+
 Generate `APP_ENCRYPTION_KEY` with:
 
 ```bash
@@ -125,6 +129,11 @@ Web app runs on `http://localhost:5173` and proxies `/graphql` and `/health` to 
 
 3. In the web app, go to `Settings > Connect Bank`, complete Plaid Link, then use `Sync Bank Transactions`.
 
+For Plaid production, set `PLAID_ENV=production` and use the **Production**
+`PLAID_SECRET` from the Plaid Dashboard. The Plaid account must also have
+Production access enabled; a sandbox secret or an account without Production
+access will produce `INVALID_API_KEYS` even when the client id is correct.
+
 ### Plaid OAuth banks (e.g. Chase)
 
 Some institutions—most notably Chase—require an OAuth redirect flow. Plaid relaunches Link after the user authenticates on the bank's site, redirecting back to a redirect URI you control.
@@ -150,10 +159,10 @@ Some institutions—most notably Chase—require an OAuth redirect flow. Plaid r
 1. Add these to `services/api/.env`:
 
    ```bash
-SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
-SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
-APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
-```
+   SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
+   SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
+   APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
+   ```
 
    If your SnapTrade client ID is a **personal** key (the `PERS-` prefix), no extra
    values are required. SnapTrade provisions a single account-owner user for you at
@@ -164,6 +173,11 @@ APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
    above are the only SnapTrade credentials you need to open the connection portal
    and sync accounts and holdings.
 
+   `SNAPTRADE_CONSUMER_KEY` must be the consumer key from the same SnapTrade API
+   key as `SNAPTRADE_CLIENT_ID`. If SnapTrade returns `Unable to verify signature
+   sent`, regenerate/copy the matching consumer key in the SnapTrade Dashboard;
+   this is unrelated to Plaid's `PLAID_SECRET`.
+
 2. Restart the Rust API from `services/api`:
 
    ```bash
@@ -172,7 +186,8 @@ APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
 
 3. In the web app, go to `Settings > Connect Robinhood`, complete the SnapTrade portal, return to the app, then use `Sync Robinhood`.
 
-SnapTrade connection creation is wired and stores the provider user secret encrypted, and `Sync Robinhood` fetches accounts and holdings for the connected user.
+SnapTrade connection creation stores a connection marker for personal keys, and
+`Sync Robinhood` fetches accounts and holdings for the authenticated personal key.
 
 ## Notes
 

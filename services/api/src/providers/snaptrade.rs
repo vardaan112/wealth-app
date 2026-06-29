@@ -212,16 +212,30 @@ async fn ensure_success(response: reqwest::Response) -> SnapTradeResult<reqwest:
     let status = response.status();
     let error = response.json::<Value>().await.ok();
     let message = error
-        .and_then(|value| {
-            value
-                .get("message")
-                .and_then(Value::as_str)
-                .or_else(|| value.get("detail").and_then(Value::as_str))
-                .map(str::to_string)
-        })
+        .and_then(snaptrade_error_message)
         .unwrap_or_else(|| format!("SnapTrade request failed with status {status}"));
 
     Err(std::io::Error::other(message).into())
+}
+
+fn snaptrade_error_message(value: Value) -> Option<String> {
+    let code = value
+        .get("code")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("default_code").and_then(Value::as_str));
+    let detail = value
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("detail").and_then(Value::as_str))
+        .or_else(|| value.get("default_detail").and_then(Value::as_str));
+
+    match (code, detail) {
+        (Some("1076"), Some(detail)) if detail.contains("verify signature") => Some(format!(
+            "SnapTrade request failed (1076): {detail}. Check that SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY are the matching values from the same SnapTrade API key. This is SnapTrade's consumer key, not a Plaid credential."
+        )),
+        (_, Some(detail)) => Some(format!("SnapTrade request failed: {detail}")),
+        _ => None,
+    }
 }
 
 fn sign_request(
@@ -230,8 +244,9 @@ fn sign_request(
     body: Option<&Value>,
     consumer_key: &str,
 ) -> SnapTradeResult<String> {
+    let content = body.map(canonical_json_value).unwrap_or(Value::Null);
     let signature_body = json!({
-        "content": body,
+        "content": content,
         "path": format!("/api/v1{path}"),
         "query": query,
     });
@@ -240,6 +255,24 @@ fn sign_request(
     mac.update(signature_content.as_bytes());
 
     Ok(general_purpose::STANDARD.encode(mac.finalize().into_bytes()))
+}
+
+fn canonical_json_value(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(canonical_json_value).collect()),
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+            let mut sorted = serde_json::Map::new();
+            for (key, value) in entries {
+                sorted.insert(key.clone(), canonical_json_value(value));
+            }
+
+            Value::Object(sorted)
+        }
+        _ => value.clone(),
+    }
 }
 
 fn query_string<'a>(pairs: impl IntoIterator<Item = (&'a str, String)>) -> String {
@@ -317,5 +350,18 @@ mod tests {
 
         assert!(!signature.is_empty());
         assert!(!signature.contains("consumer-key"));
+    }
+
+    #[test]
+    fn signs_mock_signature_like_snaptrade_docs() {
+        let signature = sign_request(
+            "/snapTrade/mockSignature",
+            "clientId=PASSIVTEST&timestamp=1635790389",
+            None,
+            "testconsumerkey",
+        )
+        .unwrap();
+
+        assert_eq!(signature, "PkP90+x/UxXw6Npfp4ezgf66LSLMQuGiz2jaLp594RU=");
     }
 }

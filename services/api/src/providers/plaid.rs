@@ -282,6 +282,7 @@ struct TransactionsGetResponse {
 struct PlaidErrorResponse {
     error_code: Option<String>,
     error_message: Option<String>,
+    request_id: Option<String>,
 }
 
 async fn ensure_success(response: reqwest::Response) -> PlaidResult<reqwest::Response> {
@@ -293,8 +294,21 @@ async fn ensure_success(response: reqwest::Response) -> PlaidResult<reqwest::Res
     let plaid_error = response.json::<PlaidErrorResponse>().await.ok();
     let message = plaid_error
         .and_then(|error| match (error.error_code, error.error_message) {
+            (Some(code), Some(message)) if code == "INVALID_API_KEYS" => {
+                let request_id = error
+                    .request_id
+                    .map(|request_id| format!(" Request ID: {request_id}."))
+                    .unwrap_or_default();
+                Some(format!(
+                    "Plaid request failed ({code}): {message}. Check PLAID_CLIENT_ID and PLAID_SECRET for the configured PLAID_ENV. For PLAID_ENV=production, the Plaid account must have Production access enabled and PLAID_SECRET must be the Production secret, not the sandbox secret.{request_id}"
+                ))
+            }
             (Some(code), Some(message)) => {
-                Some(format!("Plaid request failed ({code}): {message}"))
+                let request_id = error
+                    .request_id
+                    .map(|request_id| format!(" Request ID: {request_id}."))
+                    .unwrap_or_default();
+                Some(format!("Plaid request failed ({code}): {message}.{request_id}"))
             }
             (_, Some(message)) => Some(format!("Plaid request failed: {message}")),
             _ => None,
