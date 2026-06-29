@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod graphql;
 mod repositories;
+mod security;
 mod services;
 
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};

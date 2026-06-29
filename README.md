@@ -49,11 +49,18 @@ Set a JWT secret and the single local app user in `services/api/.env`:
 JWT_SECRET=change-this-long-random-secret
 APP_USER_EMAIL=you@example.com
 APP_USER_PASSWORD=change-this-password
+APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
+```
+
+Generate an encryption key with:
+
+```bash
+openssl rand -base64 32
 ```
 
 ### 3. Run migrations
 
-The initial schema lives in a single file, `infra/migrations/0001_initial_schema.sql`. Docker Compose mounts `./infra/migrations:/docker-entrypoint-initdb.d`, which runs SQL only on **first volume creation** (empty `postgres_data` volume). If you edit migrations after the database already exists, reset with:
+The initial schema lives in `infra/migrations/0001_initial_schema.sql`, with follow-up migrations such as `infra/migrations/0002_provider_connections.sql`. Docker Compose mounts `./infra/migrations:/docker-entrypoint-initdb.d`, which runs SQL only on **first volume creation** (empty `postgres_data` volume). If you edit migrations after the database already exists, reset with:
 
 ```bash
 docker compose down -v   # removes postgres_data volume
