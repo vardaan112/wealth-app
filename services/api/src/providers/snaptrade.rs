@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
 use hmac::{Hmac, KeyInit, Mac};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::Sha256;
 
@@ -11,18 +11,20 @@ const SNAPTRADE_BASE_URL: &str = "https://api.snaptrade.com/api/v1";
 type SnapTradeResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type HmacSha256 = Hmac<Sha256>;
 
+/// SnapTrade client using **Personal API key authentication**.
+///
+/// Personal (individual) keys identify a single account owner: SnapTrade resolves
+/// the user from the `clientId` + `consumerKey` signature, so requests must NOT
+/// include `userId`/`userSecret` and `registerUser` must NOT be called (it returns
+/// code `1012` for personal keys). We keep the existing HMAC-SHA256 request
+/// signing and simply omit the user-scoped parameters, per SnapTrade's
+/// "Personal API Key Authentication" method.
 #[derive(Clone)]
 pub struct SnapTradeClient {
     http: reqwest::Client,
     client_id: String,
     consumer_key: String,
     base_url: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct SnapTradeUser {
-    pub user_id: String,
-    pub user_secret: String,
 }
 
 impl SnapTradeClient {
@@ -35,39 +37,9 @@ impl SnapTradeClient {
         })
     }
 
-    pub async fn register_user(&self, user_id: &str) -> SnapTradeResult<SnapTradeUser> {
-        let path = "/snapTrade/registerUser";
-        let body = RegisterUserRequest {
-            user_id: user_id.to_string(),
-        };
-        let body_value = serde_json::to_value(&body)?;
-        let request = self.signed_post(path, vec![], Some(body_value))?;
-        let response = request.json(&body).send().await?;
-        let response = ensure_success(response)
-            .await?
-            .json::<RegisterUserResponse>()
-            .await?;
-
-        Ok(SnapTradeUser {
-            user_id: response.user_id,
-            user_secret: response.user_secret,
-        })
-    }
-
-    pub async fn create_connection_portal_url(
-        &self,
-        user_id: &str,
-        user_secret: &str,
-    ) -> SnapTradeResult<String> {
+    pub async fn create_connection_portal_url(&self) -> SnapTradeResult<String> {
         let path = "/snapTrade/login";
-        let request = self.signed_post(
-            path,
-            vec![
-                ("userId", user_id.to_string()),
-                ("userSecret", user_secret.to_string()),
-            ],
-            None,
-        )?;
+        let request = self.signed_post(path, vec![], None)?;
         let response = request.send().await?;
         let response = ensure_success(response)
             .await?
@@ -77,18 +49,8 @@ impl SnapTradeClient {
         Ok(response.redirect_uri)
     }
 
-    pub async fn list_accounts(
-        &self,
-        user_id: &str,
-        user_secret: &str,
-    ) -> SnapTradeResult<SnapTradeAccountsResponse> {
-        let request = self.signed_get(
-            "/accounts",
-            vec![
-                ("userId", user_id.to_string()),
-                ("userSecret", user_secret.to_string()),
-            ],
-        )?;
+    pub async fn list_accounts(&self) -> SnapTradeResult<SnapTradeAccountsResponse> {
+        let request = self.signed_get("/accounts", vec![])?;
         let raw = ensure_success(request.send().await?)
             .await?
             .json::<Value>()
@@ -100,18 +62,10 @@ impl SnapTradeClient {
 
     pub async fn list_account_positions(
         &self,
-        user_id: &str,
-        user_secret: &str,
         account_id: &str,
     ) -> SnapTradeResult<SnapTradePositionsResponse> {
         let path = format!("/accounts/{account_id}/positions");
-        let request = self.signed_get(
-            &path,
-            vec![
-                ("userId", user_id.to_string()),
-                ("userSecret", user_secret.to_string()),
-            ],
-        )?;
+        let request = self.signed_get(&path, vec![])?;
         let raw = ensure_success(request.send().await?)
             .await?
             .json::<Value>()
@@ -159,20 +113,6 @@ impl SnapTradeClient {
             .post(format!("{}{}?{}", self.base_url, path, query))
             .header("Signature", signature))
     }
-}
-
-#[derive(Serialize)]
-struct RegisterUserRequest {
-    #[serde(rename = "userId")]
-    user_id: String,
-}
-
-#[derive(Deserialize)]
-struct RegisterUserResponse {
-    #[serde(rename = "userId")]
-    user_id: String,
-    #[serde(rename = "userSecret")]
-    user_secret: String,
 }
 
 #[derive(Deserialize)]
@@ -324,8 +264,21 @@ fn percent_encode(value: &str) -> String {
 }
 
 fn env_required(name: &str) -> SnapTradeResult<String> {
-    std::env::var(name).map_err(|_| {
+    env_trimmed(name).ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, format!("{name} must be set")).into()
+    })
+}
+
+/// Reads an environment variable, trimming surrounding whitespace and treating a
+/// blank value as absent so a stray newline cannot corrupt a credential.
+fn env_trimmed(name: &str) -> Option<String> {
+    std::env::var(name).ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     })
 }
 
@@ -355,7 +308,7 @@ mod tests {
     fn signs_request_without_exposing_secret() {
         let body = json!({ "userId": "user-1" });
         let signature = sign_request(
-            "/snapTrade/registerUser",
+            "/snapTrade/login",
             "clientId=client&timestamp=123",
             Some(&body),
             "consumer-key",

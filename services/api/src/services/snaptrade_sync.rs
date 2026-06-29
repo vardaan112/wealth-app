@@ -9,7 +9,6 @@ use crate::providers::{
     SnapTradePosition,
 };
 use crate::repositories::{provider_connections, raw_provider_events};
-use crate::security::encryption;
 use crate::services::provider_sync::{self, SyncResult};
 
 type SnapTradeSyncError = Box<dyn std::error::Error + Send + Sync>;
@@ -24,18 +23,12 @@ pub async fn sync_snaptrade_accounts(
         return Err("No SnapTrade connection found. Connect a brokerage account first.".into());
     };
 
-    let Some(snaptrade_user_id) = connection.provider_user_id.clone() else {
-        return Err("SnapTrade connection is missing a user id".into());
-    };
-    let Some(encrypted_user_secret) = connection.encrypted_user_secret.clone() else {
-        return Err("SnapTrade connection is missing a user secret".into());
-    };
-    let user_secret = encryption::decrypt_string(&encrypted_user_secret)
-        .map_err(|_| "could not decrypt SnapTrade user secret")?;
-
+    // Personal API keys resolve the account owner from the signed request itself,
+    // so there is no per-user userId/userSecret to load; we only need the
+    // connection record to exist before syncing.
     let client = SnapTradeClient::from_env()?;
 
-    let outcome = run_sync(pool, user_id, &client, &snaptrade_user_id, &user_secret).await;
+    let outcome = run_sync(pool, user_id, &client).await;
 
     match &outcome {
         Ok(_) => {
@@ -59,13 +52,11 @@ async fn run_sync(
     pool: &PgPool,
     user_id: Uuid,
     client: &SnapTradeClient,
-    snaptrade_user_id: &str,
-    user_secret: &str,
 ) -> Result<SyncResult, SnapTradeSyncError> {
     let mut result = SyncResult::default();
     let today = Utc::now().date_naive();
 
-    let accounts_response = client.list_accounts(snaptrade_user_id, user_secret).await?;
+    let accounts_response = client.list_accounts().await?;
 
     raw_provider_events::create_raw_provider_event(
         pool,
@@ -114,10 +105,7 @@ async fn run_sync(
             continue;
         };
 
-        let positions = match client
-            .list_account_positions(snaptrade_user_id, user_secret, &external_account_id)
-            .await
-        {
+        let positions = match client.list_account_positions(&external_account_id).await {
             Ok(positions) => positions,
             Err(error) => {
                 result.errors.push(format!(

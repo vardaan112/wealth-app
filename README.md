@@ -150,10 +150,19 @@ Some institutions—most notably Chase—require an OAuth redirect flow. Plaid r
 1. Add these to `services/api/.env`:
 
    ```bash
-   SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
-   SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
-   APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
-   ```
+SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
+SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
+APP_ENCRYPTION_KEY=base64-encoded-32-byte-key
+```
+
+   If your SnapTrade client ID is a **personal** key (the `PERS-` prefix), no extra
+   values are required. SnapTrade provisions a single account-owner user for you at
+   signup and the `registerUser` endpoint is not available for personal keys.
+   The backend uses SnapTrade's **Personal API Key Authentication**: it signs each
+   request with the client id + consumer key and omits `userId`/`userSecret`, so
+   SnapTrade resolves the account owner from the key. The client id + consumer key
+   above are the only SnapTrade credentials you need to open the connection portal
+   and sync accounts and holdings.
 
 2. Restart the Rust API from `services/api`:
 
@@ -163,7 +172,7 @@ Some institutions—most notably Chase—require an OAuth redirect flow. Plaid r
 
 3. In the web app, go to `Settings > Connect Robinhood`, complete the SnapTrade portal, return to the app, then use `Sync Robinhood`.
 
-SnapTrade connection creation is wired and stores the provider user secret encrypted. The current `Sync Robinhood` path is still scaffolded and returns zero synced records until real SnapTrade account, holding, and transaction fetching is implemented.
+SnapTrade connection creation is wired and stores the provider user secret encrypted, and `Sync Robinhood` fetches accounts and holdings for the connected user.
 
 ## Notes
 

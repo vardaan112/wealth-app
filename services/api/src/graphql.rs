@@ -585,37 +585,26 @@ fn plaid_sync_result_from_service(result: plaid_sync::PlaidSyncResult) -> PlaidS
     }
 }
 
-async fn get_or_create_snaptrade_user(
+/// Marker stored as `provider_user_id` for personal SnapTrade keys, which have no
+/// per-user id. Keeps the connection upsert idempotent for the single account.
+const SNAPTRADE_PERSONAL_USER_MARKER: &str = "personal";
+
+/// Ensures a SnapTrade connection row exists for the user.
+///
+/// Personal (`PERS-`) API keys identify the account owner from the signed
+/// request itself, so there is no per-user `userId`/`userSecret` to register or
+/// store (and `registerUser` is not available for these keys). We persist a
+/// marker row so the sync path can tell SnapTrade has been connected.
+async fn ensure_snaptrade_connection(
     pool: &PgPool,
     user_id: Uuid,
-    client: &SnapTradeClient,
-) -> Result<(String, String), async_graphql::Error> {
-    if let Some(connection) =
-        provider_connections::find_provider_connection(pool, user_id, "snaptrade").await?
+) -> Result<(), async_graphql::Error> {
+    if provider_connections::find_provider_connection(pool, user_id, "snaptrade")
+        .await?
+        .is_some()
     {
-        let Some(snaptrade_user_id) = connection.provider_user_id else {
-            return Err(async_graphql::Error::new(
-                "SnapTrade connection is missing user id",
-            ));
-        };
-        let Some(encrypted_user_secret) = connection.encrypted_user_secret else {
-            return Err(async_graphql::Error::new(
-                "SnapTrade connection is missing user secret",
-            ));
-        };
-        let user_secret =
-            encryption::decrypt_string(&encrypted_user_secret).map_err(graphql_error)?;
-
-        return Ok((snaptrade_user_id, user_secret));
+        return Ok(());
     }
-
-    let requested_user_id = user_id.to_string();
-    let snaptrade_user = client
-        .register_user(&requested_user_id)
-        .await
-        .map_err(graphql_error)?;
-    let encrypted_user_secret =
-        encryption::encrypt_string(&snaptrade_user.user_secret).map_err(graphql_error)?;
 
     provider_connections::upsert_provider_connection(
         pool,
@@ -623,17 +612,17 @@ async fn get_or_create_snaptrade_user(
             user_id,
             provider: "snaptrade",
             provider_item_id: None,
-            provider_user_id: Some(&snaptrade_user.user_id),
+            provider_user_id: Some(SNAPTRADE_PERSONAL_USER_MARKER),
             encrypted_access_token: None,
             encrypted_refresh_token: None,
-            encrypted_user_secret: Some(&encrypted_user_secret),
+            encrypted_user_secret: None,
             sync_cursor: None,
             status: "active",
         },
     )
     .await?;
 
-    Ok((snaptrade_user.user_id, snaptrade_user.user_secret))
+    Ok(())
 }
 
 fn transaction_is_transfer(transaction: &transactions::TransactionRecord) -> bool {
@@ -1112,9 +1101,11 @@ impl MutationRoot {
     ) -> Result<bool, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
         let user_id = current_user(ctx)?.id;
-        let snaptrade = SnapTradeClient::from_env().map_err(graphql_error)?;
+        // Validate provider credentials are configured before recording the
+        // connection so misconfiguration fails fast with a clear message.
+        SnapTradeClient::from_env().map_err(graphql_error)?;
 
-        get_or_create_snaptrade_user(pool, user_id, &snaptrade).await?;
+        ensure_snaptrade_connection(pool, user_id).await?;
 
         Ok(true)
     }
@@ -1126,11 +1117,11 @@ impl MutationRoot {
         let pool = ctx.data::<PgPool>()?;
         let user_id = current_user(ctx)?.id;
         let snaptrade = SnapTradeClient::from_env().map_err(graphql_error)?;
-        let (snaptrade_user_id, user_secret) =
-            get_or_create_snaptrade_user(pool, user_id, &snaptrade).await?;
+
+        ensure_snaptrade_connection(pool, user_id).await?;
 
         snaptrade
-            .create_connection_portal_url(&snaptrade_user_id, &user_secret)
+            .create_connection_portal_url()
             .await
             .map_err(graphql_error)
     }
