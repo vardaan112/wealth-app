@@ -133,6 +133,18 @@ export const TRIGGER_MOCK_SYNC_MUTATION = `
   }
 `
 
+export const CREATE_PLAID_LINK_TOKEN_MUTATION = `
+  mutation CreatePlaidLinkToken {
+    createPlaidLinkToken
+  }
+`
+
+export const EXCHANGE_PLAID_PUBLIC_TOKEN_MUTATION = `
+  mutation ExchangePlaidPublicToken($publicToken: String!) {
+    exchangePlaidPublicToken(publicToken: $publicToken)
+  }
+`
+
 export const HOLDINGS_QUERY = `
   query Holdings {
     holdings {

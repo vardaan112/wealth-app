@@ -145,6 +145,14 @@ export type TriggerMockSyncMutation = {
   triggerMockSync: SyncResult
 }
 
+export type CreatePlaidLinkTokenMutation = {
+  createPlaidLinkToken: string
+}
+
+export type ExchangePlaidPublicTokenMutation = {
+  exchangePlaidPublicToken: boolean
+}
+
 export type LoginInput = {
   email: string
   password: string

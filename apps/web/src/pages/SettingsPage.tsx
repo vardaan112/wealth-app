@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { usePlaidLink } from 'react-plaid-link'
 import { AccountForm } from '../components/forms/AccountForm'
 import { CsvImportForm } from '../components/forms/CsvImportForm'
 import { Modal } from '../components/Modal'
 import { PlaceholderCard } from '../components/PlaceholderCard'
 import { useAuth } from '../auth/AuthContext'
 import { useAccounts } from '../hooks/useAccounts'
+import { useCreatePlaidLinkToken } from '../hooks/useCreatePlaidLinkToken'
+import { useExchangePlaidPublicToken } from '../hooks/useExchangePlaidPublicToken'
 import { useHoldings } from '../hooks/useHoldings'
 import { useMonthlySummary } from '../hooks/useMonthlySummary'
 import { useNetWorthTimeline } from '../hooks/useNetWorthTimeline'
@@ -30,14 +33,71 @@ export function SettingsPage() {
   const { logout } = useAuth()
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false)
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
+  const [plaidLinkToken, setPlaidLinkToken] = useState<string | null>(null)
+  const [shouldOpenPlaid, setShouldOpenPlaid] = useState(false)
+  const [plaidStatus, setPlaidStatus] = useState<
+    'idle' | 'creating' | 'opening' | 'exchanging' | 'connected' | 'failed'
+  >('idle')
+  const [plaidMessage, setPlaidMessage] = useState(
+    'Connect a bank account with Plaid Link. Transactions will not sync yet.',
+  )
   const [accountsResult, refreshAccounts] = useAccounts()
   const [, refreshTransactions] = useTransactions()
   const [, refreshHoldings] = useHoldings()
   const [, refreshMonthlySummary] = useMonthlySummary()
   const [, refreshNetWorthTimeline] = useNetWorthTimeline()
   const [syncResult, triggerMockSync] = useTriggerMockSync()
+  const [linkTokenResult, createPlaidLinkToken] = useCreatePlaidLinkToken()
+  const [exchangeResult, exchangePlaidPublicToken] =
+    useExchangePlaidPublicToken()
   const accounts = accountsResult.data?.accounts ?? []
   const synced = syncResult.data?.triggerMockSync
+  const plaidBusy =
+    linkTokenResult.fetching ||
+    exchangeResult.fetching ||
+    plaidStatus === 'creating' ||
+    plaidStatus === 'opening' ||
+    plaidStatus === 'exchanging'
+
+  const { open: openPlaid, ready: plaidReady } = usePlaidLink({
+    token: plaidLinkToken,
+    onSuccess: async (publicToken) => {
+      setPlaidStatus('exchanging')
+      setPlaidMessage('Finishing secure bank connection...')
+
+      const response = await exchangePlaidPublicToken({ publicToken })
+      if (response.data?.exchangePlaidPublicToken && !response.error) {
+        setPlaidStatus('connected')
+        setPlaidMessage('Bank connected successfully. Transaction sync is not enabled yet.')
+        setPlaidLinkToken(null)
+        return
+      }
+
+      setPlaidStatus('failed')
+      setPlaidMessage(response.error?.message ?? 'Could not exchange Plaid token.')
+    },
+    onExit: (error) => {
+      if (error) {
+        setPlaidStatus('failed')
+        setPlaidMessage(error.display_message ?? 'Plaid Link closed with an error.')
+        return
+      }
+
+      if (plaidStatus === 'opening') {
+        setPlaidStatus('idle')
+        setPlaidMessage('Plaid Link was closed before connecting.')
+      }
+    },
+  })
+
+  useEffect(() => {
+    if (!shouldOpenPlaid || !plaidReady) {
+      return
+    }
+
+    openPlaid()
+    setShouldOpenPlaid(false)
+  }, [openPlaid, plaidReady, shouldOpenPlaid])
 
   async function handleMockSync() {
     const response = await triggerMockSync({})
@@ -50,6 +110,23 @@ export function SettingsPage() {
       refreshMonthlySummary({ requestPolicy: 'network-only' })
       refreshNetWorthTimeline({ requestPolicy: 'network-only' })
     }
+  }
+
+  async function handleConnectBank() {
+    setPlaidStatus('creating')
+    setPlaidMessage('Creating a secure Plaid Link session...')
+
+    const response = await createPlaidLinkToken({})
+    if (response.data?.createPlaidLinkToken && !response.error) {
+      setPlaidLinkToken(response.data.createPlaidLinkToken)
+      setShouldOpenPlaid(true)
+      setPlaidStatus('opening')
+      setPlaidMessage('Opening Plaid Link...')
+      return
+    }
+
+    setPlaidStatus('failed')
+    setPlaidMessage(response.error?.message ?? 'Could not create Plaid Link token.')
   }
 
   return (
@@ -121,6 +198,41 @@ export function SettingsPage() {
           </button>
         </PlaceholderCard>
       </div>
+      <section>
+        <PlaceholderCard
+          title="Bank Connections"
+          description="Connect a bank securely with Plaid. This only establishes the connection for now."
+          className="max-w-3xl"
+        >
+          <div className="flex flex-col gap-4 rounded-2xl border border-white/[0.06] bg-background/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-muted">
+                Plaid Link
+              </p>
+              <p className="mt-1 text-sm text-text">
+                {plaidStatus === 'connected'
+                  ? 'Connected'
+                  : plaidStatus === 'failed'
+                    ? 'Connection failed'
+                    : plaidBusy
+                      ? 'Connecting...'
+                      : 'Ready to connect'}
+              </p>
+              <p className="mt-1 max-w-xl text-xs leading-5 text-muted">
+                {plaidMessage}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleConnectBank}
+              disabled={plaidBusy}
+              className="rounded-full bg-accent px-5 py-3 text-sm font-medium text-background hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {plaidBusy ? 'Connecting...' : 'Connect Bank'}
+            </button>
+          </div>
+        </PlaceholderCard>
+      </section>
       <section>
         <PlaceholderCard
           title="Provider Sync"
