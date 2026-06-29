@@ -219,7 +219,18 @@ fn provider_account_from_plaid(account: PlaidAccount) -> ProviderAccount {
 
 fn provider_transaction_from_plaid(transaction: PlaidTransaction) -> ProviderTransaction {
     let amount_cents = plaid_amount_to_cents(transaction.amount);
-    let (category_primary, category_detailed) = plaid_transaction_categories(&transaction);
+    let (mut category_primary, mut category_detailed) = plaid_transaction_categories(&transaction);
+    let mut transaction_type =
+        normalize_plaid_transaction_type(amount_cents, category_primary.as_deref());
+
+    if looks_like_transfer_payment(&transaction.name, transaction.merchant_name.as_deref()) {
+        category_detailed = Some(transfer_payment_detailed(
+            &transaction.name,
+            category_detailed.as_deref(),
+        ));
+        category_primary = Some("Transfer".to_string());
+        transaction_type = "transfer".to_string();
+    }
 
     ProviderTransaction {
         provider: "plaid".to_string(),
@@ -232,15 +243,12 @@ fn provider_transaction_from_plaid(transaction: PlaidTransaction) -> ProviderTra
             .unwrap_or_else(|| "USD".to_string()),
         merchant_name: transaction.merchant_name,
         raw_description: Some(transaction.name),
-        category_primary: category_primary.clone(),
+        category_primary,
         category_detailed,
         transaction_date: transaction.date,
         authorized_date: transaction.authorized_date,
         pending: transaction.pending,
-        transaction_type: normalize_plaid_transaction_type(
-            amount_cents,
-            category_primary.as_deref(),
-        ),
+        transaction_type,
     }
 }
 
@@ -338,12 +346,63 @@ fn normalize_plaid_account_type(account_type: &str, subtype: Option<&str>) -> St
     .to_string()
 }
 
+fn looks_like_transfer_payment(raw_description: &str, merchant_name: Option<&str>) -> bool {
+    let text =
+        format!("{} {}", raw_description, merchant_name.unwrap_or_default()).to_ascii_lowercase();
+
+    if text.contains("payment thank you")
+        || text.contains("autopay payment")
+        || text.contains("autopay")
+        || text.contains("directpay")
+        || text.contains("credit card payment")
+        || text.contains("online payment")
+        || text.contains("mobile payment")
+    {
+        return true;
+    }
+
+    if text.contains("payment to ") && (text.contains(" card ") || text.contains("card ending")) {
+        return true;
+    }
+
+    text.contains("real time transfer")
+        || text.contains("zelle payment to")
+        || text.contains("zelle payment from")
+        || text.contains("zelle payment ")
+}
+
+fn transfer_payment_detailed(raw_description: &str, category_detailed: Option<&str>) -> String {
+    let text = raw_description.to_ascii_lowercase();
+
+    if text.contains("payment thank you") || text.contains("credit card payment") {
+        return "Credit Card Payment".to_string();
+    }
+
+    if text.contains("payment to ") && text.contains("card") {
+        return "Credit Card Payment".to_string();
+    }
+
+    if text.contains("zelle") {
+        return "Zelle".to_string();
+    }
+
+    if text.contains("real time transfer") {
+        return "Bank Transfer".to_string();
+    }
+
+    category_detailed
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Internal Transfer")
+        .to_string()
+}
+
 fn normalize_plaid_transaction_type(amount_cents: i64, category_primary: Option<&str>) -> String {
     let category = category_primary.unwrap_or_default().to_lowercase();
 
     if category.contains("transfer")
         || category.contains("payment")
         || category.contains("loan disbursement")
+        || category.contains("loan payment")
     {
         "transfer"
     } else if category.contains("fee") {
@@ -409,6 +468,45 @@ mod tests {
         assert_eq!(
             normalize_plaid_transaction_type(1000, Some("Loan Disbursements")),
             "transfer"
+        );
+    }
+
+    #[test]
+    fn credit_card_payments_are_detected_from_descriptions() {
+        assert!(looks_like_transfer_payment(
+            "Payment Thank You-Mobile",
+            None
+        ));
+        assert!(looks_like_transfer_payment(
+            "Payment to Chase card ending in 0721 06/08",
+            None
+        ));
+        assert!(looks_like_transfer_payment(
+            "ZELLE PAYMENT TO VIR TOOLSIDASS JPM99CN9VBG2",
+            None
+        ));
+        assert!(!looks_like_transfer_payment("Chipotle Mexican Grill", None));
+
+        let payment = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-1".to_string(),
+            amount: -711.81,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: None,
+            name: "Payment Thank You-Mobile".to_string(),
+            category: None,
+            personal_finance_category: None,
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+
+        assert_eq!(payment.transaction_type, "transfer");
+        assert_eq!(payment.category_primary.as_deref(), Some("Transfer"));
+        assert_eq!(
+            payment.category_detailed.as_deref(),
+            Some("Credit Card Payment")
         );
     }
 

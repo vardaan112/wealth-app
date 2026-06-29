@@ -176,11 +176,15 @@ pub(crate) async fn upsert_provider_transaction(
             merchant_name = EXCLUDED.merchant_name,
             raw_description = EXCLUDED.raw_description,
             category_primary = CASE
+                WHEN EXCLUDED.transaction_type = 'transfer'
+                    THEN EXCLUDED.category_primary
                 WHEN NULLIF(TRIM(transactions.category_primary), '') IS NOT NULL
                     THEN transactions.category_primary
                 ELSE EXCLUDED.category_primary
             END,
             category_detailed = CASE
+                WHEN EXCLUDED.transaction_type = 'transfer'
+                    THEN EXCLUDED.category_detailed
                 WHEN NULLIF(TRIM(transactions.category_detailed), '') IS NOT NULL
                     THEN transactions.category_detailed
                 ELSE EXCLUDED.category_detailed
