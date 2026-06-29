@@ -22,6 +22,8 @@ wealth-app/
 
 ### 1. Start Postgres
 
+From the repo root:
+
 ```bash
 docker compose up -d
 ```
@@ -52,7 +54,22 @@ query {
 }
 ```
 
-### 3. Run the web app
+### 3. Run migrations
+
+The initial schema lives in a single file, `infra/migrations/0001_initial_schema.sql`. It is applied automatically when the Postgres container is **first** created (empty data volume). To reset and re-run the migration:
+
+```bash
+docker compose down -v   # removes postgres_data volume
+docker compose up -d
+```
+
+To verify tables were created:
+
+```sql
+\dt
+```
+
+### 4. Run the web app
 
 ```bash
 cd apps/web
@@ -64,5 +81,5 @@ Web app runs on `http://localhost:5173` and proxies `/graphql` and `/health` to 
 
 ## Notes
 
-- Migrations in `infra/migrations/` are applied automatically when the Postgres container is first created.
 - Auth, Plaid, SnapTrade, and business logic are not included yet.
+- Provider-specific tables are not used; raw webhook/import payloads go in `raw_provider_events`.
