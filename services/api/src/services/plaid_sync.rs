@@ -417,6 +417,11 @@ fn looks_like_poker_transaction(
         return Some("Pure Poker");
     }
 
+    let collapsed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if collapsed.contains("clubwptgold") {
+        return Some("ClubWPT Gold");
+    }
+
     None
 }
 
@@ -588,6 +593,56 @@ mod tests {
 
         assert_eq!(social.category_primary.as_deref(), Some("Poker"));
         assert_eq!(social.category_detailed.as_deref(), Some("Pure Social"));
+    }
+
+    #[test]
+    fn clubwpt_gold_maps_to_poker_category_for_purchases_and_deposits() {
+        let purchase = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-clubwpt-purchase".to_string(),
+            amount: 50.0,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: Some("ClubWPT Gold".to_string()),
+            name: "CLUBWPTGOLD PURCHASE".to_string(),
+            category: None,
+            personal_finance_category: None,
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 17).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+
+        assert_eq!(purchase.category_primary.as_deref(), Some("Poker"));
+        assert_eq!(purchase.category_detailed.as_deref(), Some("ClubWPT Gold"));
+        assert_eq!(purchase.transaction_type, "expense");
+
+        let deposit = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-clubwpt-deposit".to_string(),
+            amount: -100.0,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: None,
+            name: "CLUB WPT GOLD WITHDRAWAL".to_string(),
+            category: None,
+            personal_finance_category: Some(
+                crate::providers::plaid::PlaidPersonalFinanceCategory {
+                    primary: Some("TRANSFER_IN".to_string()),
+                    detailed: Some("TRANSFER_IN_DEPOSIT".to_string()),
+                },
+            ),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 18).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+
+        assert_eq!(deposit.category_primary.as_deref(), Some("Poker"));
+        assert_eq!(deposit.category_detailed.as_deref(), Some("ClubWPT Gold"));
+        assert_eq!(deposit.transaction_type, "income");
+        assert!(!looks_like_transfer_payment(
+            "CLUB WPT GOLD WITHDRAWAL",
+            None
+        ));
     }
 
     #[test]

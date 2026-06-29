@@ -61,6 +61,35 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION looks_like_poker_detailed_sql(
+  raw_description text,
+  merchant_name text
+)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  text_value text := lower(coalesce(raw_description, '') || ' ' || coalesce(merchant_name, ''));
+  collapsed text;
+BEGIN
+  IF text_value ~* 'pure social' THEN
+    RETURN 'Pure Social';
+  END IF;
+
+  IF text_value ~* 'pure poker' THEN
+    RETURN 'Pure Poker';
+  END IF;
+
+  collapsed := regexp_replace(text_value, '\s+', '', 'g');
+  IF collapsed ~* 'clubwptgold' THEN
+    RETURN 'ClubWPT Gold';
+  END IF;
+
+  RETURN NULL;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION looks_like_transfer_payment_sql(
   raw_description text,
   merchant_name text
@@ -153,6 +182,8 @@ derived AS (
   SELECT
     t.id,
     CASE
+      WHEN looks_like_poker_detailed_sql(t.raw_description, t.merchant_name) IS NOT NULL
+        THEN 'Poker'
       WHEN looks_like_transfer_payment_sql(t.raw_description, t.merchant_name) THEN 'Transfer'
       WHEN NULLIF(trim(format_plaid_pfc_label(p.pfc_primary)), '') IS NOT NULL
         THEN format_plaid_pfc_label(p.pfc_primary)
@@ -161,6 +192,8 @@ derived AS (
       ELSE NULL
     END AS new_category_primary,
     CASE
+      WHEN looks_like_poker_detailed_sql(t.raw_description, t.merchant_name) IS NOT NULL
+        THEN looks_like_poker_detailed_sql(t.raw_description, t.merchant_name)
       WHEN looks_like_transfer_payment_sql(t.raw_description, t.merchant_name)
         THEN transfer_payment_detailed_sql(t.raw_description, NULL)
       WHEN NULLIF(trim(format_plaid_pfc_detailed(p.pfc_primary, p.pfc_detailed)), '') IS NOT NULL
@@ -188,6 +221,7 @@ FROM derived d
 WHERE t.id = d.id
   AND (
     NULLIF(trim(t.category_primary), '') IS NULL
+    OR looks_like_poker_detailed_sql(t.raw_description, t.merchant_name) IS NOT NULL
     OR looks_like_transfer_payment_sql(t.raw_description, t.merchant_name)
     OR (
       normalize_tx_type_sql(d.amount_cents, d.new_category_primary) = 'transfer'
