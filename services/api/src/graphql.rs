@@ -5,11 +5,13 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::providers::MockProvider;
+use crate::providers::{MockProvider, PlaidClient};
 use crate::repositories::accounts;
 use crate::repositories::holdings;
+use crate::repositories::provider_connections;
 use crate::repositories::transactions;
 use crate::repositories::users;
+use crate::security::encryption;
 use crate::services::csv_import;
 use crate::services::provider_sync;
 use crate::services::snapshots as snapshot_service;
@@ -453,6 +455,10 @@ fn current_user(ctx: &Context<'_>) -> Result<auth::CurrentUser, async_graphql::E
         .ok_or_else(|| async_graphql::Error::new("unauthenticated"))
 }
 
+fn graphql_error(error: impl std::fmt::Display) -> async_graphql::Error {
+    async_graphql::Error::new(error.to_string())
+}
+
 fn transaction_from_record(record: transactions::TransactionRecord) -> Transaction {
     Transaction {
         id: record.id.to_string(),
@@ -892,6 +898,47 @@ impl MutationRoot {
         let result = provider_sync::sync_provider(pool, user_id, &provider).await?;
 
         Ok(sync_result_from_service(result))
+    }
+
+    async fn create_plaid_link_token(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<String, async_graphql::Error> {
+        let user_id = current_user(ctx)?.id;
+        let plaid = PlaidClient::from_env().map_err(graphql_error)?;
+
+        plaid
+            .create_link_token(user_id)
+            .await
+            .map_err(graphql_error)
+    }
+
+    async fn exchange_plaid_public_token(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "publicToken")] public_token: String,
+    ) -> Result<bool, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let plaid = PlaidClient::from_env().map_err(graphql_error)?;
+        let exchange = plaid
+            .exchange_public_token(&public_token)
+            .await
+            .map_err(graphql_error)?;
+        let encrypted_access_token =
+            encryption::encrypt_string(&exchange.access_token).map_err(graphql_error)?;
+
+        provider_connections::upsert_provider_connection(
+            pool,
+            user_id,
+            "plaid",
+            Some(&exchange.item_id),
+            &encrypted_access_token,
+            "connected",
+        )
+        .await?;
+
+        Ok(true)
     }
 }
 
