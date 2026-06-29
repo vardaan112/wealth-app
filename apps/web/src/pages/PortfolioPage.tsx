@@ -1,10 +1,14 @@
 import { useState } from 'react'
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { HoldingForm } from '../components/forms/HoldingForm'
 import { Modal } from '../components/Modal'
 import { PlaceholderCard } from '../components/PlaceholderCard'
 import { useAccounts } from '../hooks/useAccounts'
 import { useHoldings } from '../hooks/useHoldings'
+import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
 import { formatMoney } from '../lib/format'
+
+const allocationColors = ['#7c9cff', '#8b95a5', '#5f6876', '#343b46']
 
 export function PortfolioPage() {
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false)
@@ -16,6 +20,19 @@ export function PortfolioPage() {
     (total, holding) => total + holding.marketValue.amountCents,
     0,
   )
+  const allocationData = Object.entries(
+    holdings.reduce<Record<string, number>>((groups, holding) => {
+      groups[holding.assetType] =
+        (groups[holding.assetType] ?? 0) + holding.marketValue.amountCents
+      return groups
+    }, {}),
+  )
+    .map(([assetType, value]) => ({
+      assetType,
+      value,
+      percent: totalValue > 0 ? (value / totalValue) * 100 : 0,
+    }))
+    .sort((a, b) => b.value - a.value)
 
   return (
     <div className="animate-rise mx-auto flex max-w-5xl flex-col gap-8 pt-6">
@@ -45,6 +62,64 @@ export function PortfolioPage() {
               : 'No manual holdings yet.'
           }
         />
+        <PlaceholderCard title="Allocation" description="By asset type.">
+          {allocationData.length === 0 ? (
+            <p className="text-sm text-muted">No allocation yet.</p>
+          ) : (
+            <div className="grid gap-5 sm:grid-cols-[0.9fr_1.1fr] sm:items-center">
+              <div className="h-44 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Tooltip
+                      contentStyle={chartTooltipStyle}
+                      labelStyle={chartLabelStyle}
+                      formatter={(value) => formatCents(Number(value))}
+                    />
+                    <Pie
+                      data={allocationData}
+                      dataKey="value"
+                      nameKey="assetType"
+                      innerRadius="62%"
+                      outerRadius="86%"
+                      paddingAngle={2}
+                      stroke="rgba(8,10,13,0.7)"
+                      strokeWidth={2}
+                    >
+                      {allocationData.map((entry, index) => (
+                        <Cell
+                          key={entry.assetType}
+                          fill={allocationColors[index % allocationColors.length]}
+                        />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-3">
+                {allocationData.map((entry, index) => (
+                  <div
+                    key={entry.assetType}
+                    className="flex items-center justify-between gap-4 text-sm"
+                  >
+                    <span className="flex min-w-0 items-center gap-2 text-text/90">
+                      <span
+                        className="size-2 rounded-full"
+                        style={{
+                          backgroundColor:
+                            allocationColors[index % allocationColors.length],
+                        }}
+                      />
+                      <span className="truncate">{entry.assetType}</span>
+                    </span>
+                    <span className="text-xs text-muted">
+                      {entry.percent.toFixed(1)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </PlaceholderCard>
         <PlaceholderCard
           title="Manual holdings"
           description="Current entries from GraphQL."
@@ -78,10 +153,7 @@ export function PortfolioPage() {
             </ul>
           )}
         </PlaceholderCard>
-        <PlaceholderCard
-          title="YTD return"
-          description="+8.2% vs benchmark +6.1%."
-        />
+        <PlaceholderCard title="YTD return" description="Return chart coming later." />
         <PlaceholderCard
           title="Top holdings"
           description={

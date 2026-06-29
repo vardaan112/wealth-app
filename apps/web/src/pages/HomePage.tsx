@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import { Area, AreaChart, ResponsiveContainer, Tooltip } from 'recharts'
+import { Line, LineChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { useHoldings } from '../hooks/useHoldings'
 import { useMonthlySummary } from '../hooks/useMonthlySummary'
 import { useNetWorthTimeline } from '../hooks/useNetWorthTimeline'
 import { useTransactions } from '../hooks/useTransactions'
+import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
 import { formatMoney, formatPercent } from '../lib/format'
 import type { Money, NetWorthPoint, Transaction } from '../graphql/types'
 
@@ -125,42 +126,27 @@ export function HomePage() {
         <div className="mt-6 h-40 w-full sm:h-52">
           {chartData.length > 1 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
+              <LineChart
                 data={chartData}
                 margin={{ top: 8, right: 0, bottom: 0, left: 0 }}
               >
-                <defs>
-                  <linearGradient id="netWorthFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#7c9cff" stopOpacity={0.32} />
-                    <stop offset="100%" stopColor="#7c9cff" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
                 <Tooltip
                   cursor={{ stroke: 'rgba(124,156,255,0.3)', strokeWidth: 1 }}
-                  contentStyle={{
-                    background: 'rgba(16,19,23,0.92)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: 14,
-                    fontSize: 12,
-                    color: '#f4f6f8',
-                    backdropFilter: 'blur(8px)',
-                  }}
-                  labelStyle={{ color: '#8b95a5' }}
-                  formatter={(value) => [
-                    formatMoney(money(Math.round(Number(value) * 100))),
-                    'Net worth',
-                  ]}
+                  contentStyle={chartTooltipStyle}
+                  labelStyle={chartLabelStyle}
+                  formatter={(value) => [formatCents(Math.round(Number(value) * 100)), 'Net worth']}
                 />
-                <Area
+                <Line
                   type="monotone"
                   dataKey="value"
                   stroke="#7c9cff"
-                  strokeWidth={2}
-                  fill="url(#netWorthFill)"
+                  strokeWidth={2.5}
+                  dot={{ r: 2, fill: '#7c9cff', strokeWidth: 0 }}
+                  activeDot={{ r: 4, fill: '#7c9cff', strokeWidth: 0 }}
                   animationDuration={900}
                   animationEasing="ease-out"
                 />
-              </AreaChart>
+              </LineChart>
             </ResponsiveContainer>
           ) : (
             <div className="h-full w-full rounded-2xl bg-white/[0.02]" />
