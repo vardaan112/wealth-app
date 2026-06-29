@@ -28,7 +28,7 @@ From the repo root:
 docker compose up -d
 ```
 
-Postgres runs on `localhost:5432` with user/password/database `wealth`.
+Postgres runs on `localhost:5432` with user `wealth_user`, password `wealth_password`, and database `wealth_app`.
 
 ### 2. Set `DATABASE_URL`
 
@@ -40,12 +40,12 @@ cp .env.example .env
 The default in `.env.example` matches Docker Compose:
 
 ```
-DATABASE_URL=postgres://wealth:wealth@localhost:5432/wealth
+DATABASE_URL=postgres://wealth_user:wealth_password@localhost:5432/wealth_app
 ```
 
 ### 3. Run migrations
 
-The initial schema lives in a single file, `infra/migrations/0001_initial_schema.sql`. It is applied automatically when the Postgres container is **first** created (empty data volume). To reset and re-run the migration:
+The initial schema lives in a single file, `infra/migrations/0001_initial_schema.sql`. Docker Compose mounts `./infra/migrations:/docker-entrypoint-initdb.d`, which runs SQL only on **first volume creation** (empty `postgres_data` volume). If you edit migrations after the database already exists, reset with:
 
 ```bash
 docker compose down -v   # removes postgres_data volume
