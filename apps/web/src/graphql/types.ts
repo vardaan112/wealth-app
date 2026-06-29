@@ -67,6 +67,7 @@ export type NetWorthPoint = {
 export type MeQuery = { me: User }
 export type AccountsQuery = { accounts: Account[] }
 export type TransactionsQuery = { transactions: Transaction[] }
+export type TransactionsQueryVariables = { month?: string | null }
 export type HoldingsQuery = { holdings: Holding[] }
 export type MonthlySummaryQuery = { monthlySummary: MonthlySummary }
 export type NetWorthTimelineQuery = { netWorthTimeline: NetWorthPoint[] }

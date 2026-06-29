@@ -52,8 +52,8 @@ export const ACCOUNTS_QUERY = `
 `
 
 export const TRANSACTIONS_QUERY = `
-  query Transactions {
-    transactions {
+  query Transactions($month: String) {
+    transactions(month: $month) {
       id
       accountId
       merchantName

@@ -112,3 +112,80 @@ export const TRANSACTION_SORT_LABELS: Record<TransactionSort, string> = {
   amount: 'Amount',
   category: 'Category',
 }
+
+export type TransactionViewTotals =
+  | {
+      kind: 'all'
+      incomeCents: number
+      expenseCents: number
+      netCents: number
+      currency: string
+    }
+  | { kind: 'expense'; totalCents: number; currency: string }
+  | { kind: 'income'; totalCents: number; currency: string }
+  | { kind: 'transfer'; totalCents: number; currency: string }
+
+function transactionCurrency(transaction: Transaction): string {
+  return transaction.amount.currency
+}
+
+export function computeTransactionViewTotals(
+  transactions: Transaction[],
+  kind: TransactionKind,
+): TransactionViewTotals | null {
+  if (transactions.length === 0) {
+    return null
+  }
+
+  const currency = transactionCurrency(transactions[0])
+
+  if (kind === 'expense') {
+    const totalCents = transactions.reduce(
+      (sum, transaction) => sum + Math.abs(transaction.amount.amountCents),
+      0,
+    )
+    return { kind: 'expense', totalCents, currency }
+  }
+
+  if (kind === 'income') {
+    const totalCents = transactions.reduce(
+      (sum, transaction) => sum + transaction.amount.amountCents,
+      0,
+    )
+    return { kind: 'income', totalCents, currency }
+  }
+
+  if (kind === 'transfer') {
+    const totalCents = transactions.reduce(
+      (sum, transaction) => sum + Math.abs(transaction.amount.amountCents),
+      0,
+    )
+    return { kind: 'transfer', totalCents, currency }
+  }
+
+  const incomeCents = transactions
+    .filter(
+      (transaction) =>
+        transactionIsIncome(transaction) && !transactionIsTransfer(transaction),
+    )
+    .reduce((sum, transaction) => sum + transaction.amount.amountCents, 0)
+  const expenseCents = transactions
+    .filter(
+      (transaction) =>
+        transactionIsSpending(transaction) &&
+        !transactionIsIncome(transaction) &&
+        !transactionIsTransfer(transaction),
+    )
+    .reduce(
+      (sum, transaction) => sum + Math.abs(transaction.amount.amountCents),
+      0,
+    )
+
+  return {
+    kind: 'all',
+    incomeCents,
+    expenseCents,
+    netCents: incomeCents - expenseCents,
+    currency,
+  }
+}

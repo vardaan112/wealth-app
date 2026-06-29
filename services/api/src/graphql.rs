@@ -759,10 +759,11 @@ impl QueryRoot {
     async fn transactions(
         &self,
         ctx: &Context<'_>,
+        month: Option<String>,
     ) -> Result<Vec<Transaction>, async_graphql::Error> {
         let pool = ctx.data::<PgPool>()?;
         let user_id = current_user(ctx)?.id;
-        let records = transactions::list_transactions(pool, user_id, None).await?;
+        let records = transactions::list_transactions(pool, user_id, month).await?;
 
         Ok(records.into_iter().map(transaction_from_record).collect())
     }

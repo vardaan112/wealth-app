@@ -4,10 +4,11 @@ import { SelectInput } from '../components/FormControls'
 import { Modal } from '../components/Modal'
 import { useAccounts } from '../hooks/useAccounts'
 import { useTransactions } from '../hooks/useTransactions'
-import { formatMoney } from '../lib/format'
+import { currentMonth, formatMoney, formatMonthLabel, recentMonths } from '../lib/format'
 import {
   TRANSACTION_KIND_LABELS,
   TRANSACTION_SORT_LABELS,
+  computeTransactionViewTotals,
   distinctCategories,
   filterAndSortTransactions,
   transactionIsIncome,
@@ -17,6 +18,7 @@ import {
 
 const KINDS: TransactionKind[] = ['all', 'expense', 'income', 'transfer']
 const SORTS: TransactionSort[] = ['date', 'amount', 'category']
+const MONTH_OPTIONS = recentMonths(24)
 
 function kindDescription(kind: TransactionKind): string {
   switch (kind) {
@@ -31,12 +33,19 @@ function kindDescription(kind: TransactionKind): string {
   }
 }
 
+function formatTotalCents(amountCents: number, currency: string): string {
+  return formatMoney({ amountCents, currency })
+}
+
 export function TransactionsPage() {
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false)
   const [kind, setKind] = useState<TransactionKind>('all')
+  const [monthFilter, setMonthFilter] = useState(currentMonth())
   const [categoryFilter, setCategoryFilter] = useState<string>('')
   const [sort, setSort] = useState<TransactionSort>('date')
-  const [transactionsResult, refreshTransactions] = useTransactions()
+  const [transactionsResult, refreshTransactions] = useTransactions(
+    monthFilter || null,
+  )
   const [accountsResult, refreshAccounts] = useAccounts()
   const transactions = transactionsResult.data?.transactions ?? []
   const accounts = accountsResult.data?.accounts ?? []
@@ -55,6 +64,11 @@ export function TransactionsPage() {
         sort,
       ),
     [transactions, kind, categoryFilter, sort],
+  )
+
+  const viewTotals = useMemo(
+    () => computeTransactionViewTotals(visibleTransactions, kind),
+    [visibleTransactions, kind],
   )
 
   return (
@@ -97,7 +111,25 @@ export function TransactionsPage() {
           })}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.18em] text-muted">
+              Month
+            </span>
+            <SelectInput
+              value={monthFilter}
+              onChange={(event) => setMonthFilter(event.target.value)}
+              className="mt-2"
+            >
+              <option value="">All months</option>
+              {MONTH_OPTIONS.map((month) => (
+                <option key={month} value={month}>
+                  {formatMonthLabel(month)}
+                </option>
+              ))}
+            </SelectInput>
+          </label>
+
           <label className="block">
             <span className="text-xs uppercase tracking-[0.18em] text-muted">
               Category
@@ -134,10 +166,62 @@ export function TransactionsPage() {
           </label>
         </div>
 
+        {!transactionsResult.fetching && !transactionsResult.error && viewTotals ? (
+          <div className="rounded-2xl border border-white/[0.08] bg-background/40 px-4 py-4">
+            {viewTotals.kind === 'all' ? (
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-[0.16em] text-muted">
+                    Income
+                  </p>
+                  <p className="mt-2 text-base font-medium tracking-tight text-accent">
+                    {formatTotalCents(viewTotals.incomeCents, viewTotals.currency)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-[0.16em] text-muted">
+                    Expenses
+                  </p>
+                  <p className="mt-2 text-base font-medium tracking-tight text-text">
+                    {formatTotalCents(viewTotals.expenseCents, viewTotals.currency)}
+                  </p>
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <p className="text-[0.7rem] uppercase tracking-[0.16em] text-muted">
+                    Net
+                  </p>
+                  <p className="mt-2 text-base font-medium tracking-tight text-text">
+                    {formatTotalCents(viewTotals.netCents, viewTotals.currency)}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="text-[0.7rem] uppercase tracking-[0.16em] text-muted">
+                  {viewTotals.kind === 'expense'
+                    ? 'Total expenses'
+                    : viewTotals.kind === 'income'
+                      ? 'Total income'
+                      : 'Transfer volume'}
+                </p>
+                <p
+                  className={[
+                    'mt-2 text-xl font-medium tracking-tight',
+                    viewTotals.kind === 'income' ? 'text-accent' : 'text-text',
+                  ].join(' ')}
+                >
+                  {formatTotalCents(viewTotals.totalCents, viewTotals.currency)}
+                </p>
+              </div>
+            )}
+          </div>
+        ) : null}
+
         {!transactionsResult.fetching && !transactionsResult.error ? (
           <p className="text-xs text-muted">
             Showing {visibleTransactions.length} of {transactions.length}{' '}
             transactions
+            {monthFilter ? ` in ${formatMonthLabel(monthFilter)}` : ''}
             {categoryFilter ? ` in ${categoryFilter}` : ''}
             {kind !== 'all' ? ` (${TRANSACTION_KIND_LABELS[kind].toLowerCase()})` : ''}
           </p>

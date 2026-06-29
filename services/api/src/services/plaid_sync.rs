@@ -273,7 +273,13 @@ fn provider_transaction_from_plaid(transaction: PlaidTransaction) -> ProviderTra
     let mut transaction_type =
         normalize_plaid_transaction_type(amount_cents, category_primary.as_deref());
 
-    if looks_like_transfer_payment(&transaction.name, transaction.merchant_name.as_deref()) {
+    if let Some(poker_detailed) =
+        looks_like_poker_transaction(&transaction.name, transaction.merchant_name.as_deref())
+    {
+        category_primary = Some("Poker".to_string());
+        category_detailed = Some(poker_detailed.to_string());
+        transaction_type = normalize_plaid_transaction_type(amount_cents, Some("Poker"));
+    } else if looks_like_transfer_payment(&transaction.name, transaction.merchant_name.as_deref()) {
         category_detailed = Some(transfer_payment_detailed(
             &transaction.name,
             category_detailed.as_deref(),
@@ -394,6 +400,24 @@ fn normalize_plaid_account_type(account_type: &str, subtype: Option<&str>) -> St
         _ => "other",
     }
     .to_string()
+}
+
+fn looks_like_poker_transaction(
+    raw_description: &str,
+    merchant_name: Option<&str>,
+) -> Option<&'static str> {
+    let text =
+        format!("{} {}", raw_description, merchant_name.unwrap_or_default()).to_ascii_lowercase();
+
+    if text.contains("pure social") {
+        return Some("Pure Social");
+    }
+
+    if text.contains("pure poker") {
+        return Some("Pure Poker");
+    }
+
+    None
 }
 
 fn looks_like_transfer_payment(raw_description: &str, merchant_name: Option<&str>) -> bool {
@@ -519,6 +543,51 @@ mod tests {
             normalize_plaid_transaction_type(1000, Some("Loan Disbursements")),
             "transfer"
         );
+    }
+
+    #[test]
+    fn pure_poker_and_pure_social_map_to_poker_category() {
+        let poker = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-poker".to_string(),
+            amount: 25.0,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: Some("Pure Poker".to_string()),
+            name: "PURE POKER PURCHASE".to_string(),
+            category: None,
+            personal_finance_category: Some(
+                crate::providers::plaid::PlaidPersonalFinanceCategory {
+                    primary: Some("ENTERTAINMENT".to_string()),
+                    detailed: Some("ENTERTAINMENT_OTHER".to_string()),
+                },
+            ),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+
+        assert_eq!(poker.category_primary.as_deref(), Some("Poker"));
+        assert_eq!(poker.category_detailed.as_deref(), Some("Pure Poker"));
+        assert_eq!(poker.transaction_type, "expense");
+
+        let social = provider_transaction_from_plaid(PlaidTransaction {
+            account_id: "account-1".to_string(),
+            transaction_id: "transaction-social".to_string(),
+            amount: 10.0,
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+            merchant_name: Some("Pure Social".to_string()),
+            name: "PURE SOCIAL COINS".to_string(),
+            category: None,
+            personal_finance_category: None,
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 16).unwrap(),
+            authorized_date: None,
+            pending: false,
+        });
+
+        assert_eq!(social.category_primary.as_deref(), Some("Poker"));
+        assert_eq!(social.category_detailed.as_deref(), Some("Pure Social"));
     }
 
     #[test]
