@@ -8,6 +8,7 @@ use crate::repositories;
 use crate::repositories::accounts;
 use crate::repositories::holdings;
 use crate::repositories::transactions;
+use crate::services::csv_import;
 use crate::services::snapshots as snapshot_service;
 
 const API_VERSION: &str = "0.1.0";
@@ -122,6 +123,15 @@ struct NetWorthPoint {
     debt: Money,
 }
 
+#[derive(SimpleObject, Clone)]
+struct CsvImportResult {
+    #[graphql(name = "importedCount")]
+    imported_count: i32,
+    #[graphql(name = "skippedCount")]
+    skipped_count: i32,
+    errors: Vec<String>,
+}
+
 #[derive(InputObject)]
 struct ManualAccountInput {
     name: String,
@@ -171,6 +181,15 @@ struct ManualHoldingInput {
     #[graphql(name = "priceCents")]
     price_cents: Option<i64>,
     currency: Option<String>,
+}
+
+#[derive(InputObject)]
+struct CsvImportInput {
+    #[graphql(name = "accountId")]
+    account_id: ID,
+    source: String,
+    #[graphql(name = "csvText")]
+    csv_text: String,
 }
 
 fn mock_user() -> User {
@@ -436,6 +455,14 @@ fn net_worth_point_from_snapshot(snapshot: snapshot_service::PortfolioSnapshot) 
             amount_cents: snapshot.debt_cents,
             currency: snapshot.currency,
         },
+    }
+}
+
+fn csv_import_result_from_service(result: csv_import::CsvImportResult) -> CsvImportResult {
+    CsvImportResult {
+        imported_count: result.imported_count,
+        skipped_count: result.skipped_count,
+        errors: result.errors,
     }
 }
 
@@ -751,6 +778,27 @@ impl MutationRoot {
         };
 
         Ok(holding_from_record(holding))
+    }
+
+    async fn import_transactions_csv(
+        &self,
+        ctx: &Context<'_>,
+        input: CsvImportInput,
+    ) -> Result<CsvImportResult, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let account_id = parse_uuid(&input.account_id, "accountId")?;
+
+        let result = csv_import::import_transactions_csv(
+            pool,
+            user_id,
+            account_id,
+            input.source,
+            input.csv_text,
+        )
+        .await?;
+
+        Ok(csv_import_result_from_service(result))
     }
 }
 

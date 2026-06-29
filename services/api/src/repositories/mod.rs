@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod holdings;
+pub mod import_batches;
 pub mod snapshots;
 pub mod transactions;
 

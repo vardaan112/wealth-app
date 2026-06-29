@@ -164,6 +164,33 @@ pub async fn create_transaction(
     .await
 }
 
+pub async fn transaction_duplicate_exists(
+    pool: &PgPool,
+    account_id: Uuid,
+    transaction_date: NaiveDate,
+    amount_cents: i64,
+    raw_description: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM transactions
+            WHERE account_id = $1
+              AND transaction_date = $2
+              AND amount_cents = $3
+              AND LOWER(TRIM(COALESCE(raw_description, ''))) = LOWER(TRIM($4))
+        )
+        "#,
+    )
+    .bind(account_id)
+    .bind(transaction_date)
+    .bind(amount_cents)
+    .bind(raw_description)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn update_transaction_category(
     pool: &PgPool,
     user_id: Uuid,
