@@ -37,7 +37,14 @@ pub async fn sync_plaid_transactions(
     let plaid = PlaidClient::from_env()?;
 
     for connection in connections {
-        let access_token = match encryption::decrypt_string(&connection.encrypted_access_token) {
+        let Some(encrypted_access_token) = connection.encrypted_access_token.as_deref() else {
+            result.errors.push(format!(
+                "Plaid connection {} is missing an access token",
+                connection.id
+            ));
+            continue;
+        };
+        let access_token = match encryption::decrypt_string(encrypted_access_token) {
             Ok(access_token) => access_token,
             Err(_) => {
                 result.errors.push(format!(
@@ -64,7 +71,7 @@ pub async fn sync_plaid_transactions(
             user_id,
             "plaid",
             "accounts/get",
-            connection.external_item_id.as_deref(),
+            connection.provider_item_id.as_deref(),
             accounts.raw,
         )
         .await?;
@@ -89,7 +96,7 @@ pub async fn sync_plaid_transactions(
             user_id,
             &plaid,
             &access_token,
-            connection.external_item_id.as_deref(),
+            connection.provider_item_id.as_deref(),
             &mut account_ids,
             &mut result,
         )
@@ -106,7 +113,7 @@ async fn sync_transactions_for_connection(
     user_id: Uuid,
     plaid: &PlaidClient,
     access_token: &str,
-    external_item_id: Option<&str>,
+    provider_item_id: Option<&str>,
     account_ids: &mut HashMap<String, Uuid>,
     result: &mut PlaidSyncResult,
 ) -> Result<(), PlaidSyncError> {
@@ -134,7 +141,7 @@ async fn sync_transactions_for_connection(
             user_id,
             "plaid",
             "transactions/get",
-            external_item_id,
+            provider_item_id,
             page.raw,
         )
         .await?;

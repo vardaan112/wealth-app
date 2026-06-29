@@ -7,11 +7,28 @@ pub struct ProviderConnectionRecord {
     pub id: Uuid,
     pub user_id: Uuid,
     pub provider: String,
-    pub external_item_id: Option<String>,
-    pub encrypted_access_token: String,
+    pub provider_item_id: Option<String>,
+    pub provider_user_id: Option<String>,
+    pub encrypted_access_token: Option<String>,
+    pub encrypted_refresh_token: Option<String>,
+    pub encrypted_user_secret: Option<String>,
+    pub sync_cursor: Option<String>,
     pub status: String,
+    pub last_synced_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+pub struct UpsertProviderConnectionInput<'a> {
+    pub user_id: Uuid,
+    pub provider: &'a str,
+    pub provider_item_id: Option<&'a str>,
+    pub provider_user_id: Option<&'a str>,
+    pub encrypted_access_token: Option<&'a str>,
+    pub encrypted_refresh_token: Option<&'a str>,
+    pub encrypted_user_secret: Option<&'a str>,
+    pub sync_cursor: Option<&'a str>,
+    pub status: &'a str,
 }
 
 pub async fn list_provider_connections(
@@ -25,15 +42,20 @@ pub async fn list_provider_connections(
             id,
             user_id,
             provider,
-            external_item_id,
+            provider_item_id,
+            provider_user_id,
             encrypted_access_token,
+            encrypted_refresh_token,
+            encrypted_user_secret,
+            sync_cursor,
             status,
+            last_synced_at,
             created_at,
             updated_at
         FROM provider_connections
         WHERE user_id = $1
           AND provider = $2
-          AND status = 'connected'
+          AND status = 'active'
         ORDER BY created_at ASC
         "#,
     )
@@ -54,9 +76,14 @@ pub async fn find_provider_connection(
             id,
             user_id,
             provider,
-            external_item_id,
+            provider_item_id,
+            provider_user_id,
             encrypted_access_token,
+            encrypted_refresh_token,
+            encrypted_user_secret,
+            sync_cursor,
             status,
+            last_synced_at,
             created_at,
             updated_at
         FROM provider_connections
@@ -74,22 +101,17 @@ pub async fn find_provider_connection(
 
 pub async fn upsert_provider_connection(
     pool: &PgPool,
-    user_id: Uuid,
-    provider: &str,
-    external_item_id: Option<&str>,
-    encrypted_access_token: &str,
-    status: &str,
+    input: UpsertProviderConnectionInput<'_>,
 ) -> Result<Uuid, sqlx::Error> {
-    if let Some(external_item_id) = external_item_id {
-        if let Some(id) = update_provider_connection(
-            pool,
-            user_id,
-            provider,
-            external_item_id,
-            encrypted_access_token,
-            status,
-        )
-        .await?
+    if let Some(provider_item_id) = input.provider_item_id {
+        if let Some(id) =
+            update_provider_connection_by_item_id(pool, &input, provider_item_id).await?
+        {
+            return Ok(id);
+        }
+    } else if let Some(provider_user_id) = input.provider_user_id {
+        if let Some(id) =
+            update_provider_connection_by_user_id(pool, &input, provider_user_id).await?
         {
             return Ok(id);
         }
@@ -100,49 +122,97 @@ pub async fn upsert_provider_connection(
         INSERT INTO provider_connections (
             user_id,
             provider,
-            external_item_id,
+            provider_item_id,
+            provider_user_id,
             encrypted_access_token,
+            encrypted_refresh_token,
+            encrypted_user_secret,
+            sync_cursor,
             status
         )
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id
         "#,
     )
-    .bind(user_id)
-    .bind(provider)
-    .bind(external_item_id)
-    .bind(encrypted_access_token)
-    .bind(status)
+    .bind(input.user_id)
+    .bind(input.provider)
+    .bind(input.provider_item_id)
+    .bind(input.provider_user_id)
+    .bind(input.encrypted_access_token)
+    .bind(input.encrypted_refresh_token)
+    .bind(input.encrypted_user_secret)
+    .bind(input.sync_cursor)
+    .bind(input.status)
     .fetch_one(pool)
     .await
 }
 
-async fn update_provider_connection(
+async fn update_provider_connection_by_item_id(
     pool: &PgPool,
-    user_id: Uuid,
-    provider: &str,
-    external_item_id: &str,
-    encrypted_access_token: &str,
-    status: &str,
+    input: &UpsertProviderConnectionInput<'_>,
+    provider_item_id: &str,
 ) -> Result<Option<Uuid>, sqlx::Error> {
     sqlx::query_scalar::<_, Uuid>(
         r#"
         UPDATE provider_connections
         SET
-            encrypted_access_token = $4,
-            status = $5,
+            provider_user_id = $4,
+            encrypted_access_token = $5,
+            encrypted_refresh_token = $6,
+            encrypted_user_secret = $7,
+            sync_cursor = $8,
+            status = $9,
             updated_at = NOW()
         WHERE user_id = $1
           AND provider = $2
-          AND external_item_id = $3
+          AND provider_item_id = $3
         RETURNING id
         "#,
     )
-    .bind(user_id)
-    .bind(provider)
-    .bind(external_item_id)
-    .bind(encrypted_access_token)
-    .bind(status)
+    .bind(input.user_id)
+    .bind(input.provider)
+    .bind(provider_item_id)
+    .bind(input.provider_user_id)
+    .bind(input.encrypted_access_token)
+    .bind(input.encrypted_refresh_token)
+    .bind(input.encrypted_user_secret)
+    .bind(input.sync_cursor)
+    .bind(input.status)
+    .fetch_optional(pool)
+    .await
+}
+
+async fn update_provider_connection_by_user_id(
+    pool: &PgPool,
+    input: &UpsertProviderConnectionInput<'_>,
+    provider_user_id: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar::<_, Uuid>(
+        r#"
+        UPDATE provider_connections
+        SET
+            provider_item_id = $4,
+            encrypted_access_token = $5,
+            encrypted_refresh_token = $6,
+            encrypted_user_secret = $7,
+            sync_cursor = $8,
+            status = $9,
+            updated_at = NOW()
+        WHERE user_id = $1
+          AND provider = $2
+          AND provider_user_id = $3
+        RETURNING id
+        "#,
+    )
+    .bind(input.user_id)
+    .bind(input.provider)
+    .bind(provider_user_id)
+    .bind(input.provider_item_id)
+    .bind(input.encrypted_access_token)
+    .bind(input.encrypted_refresh_token)
+    .bind(input.encrypted_user_secret)
+    .bind(input.sync_cursor)
+    .bind(input.status)
     .fetch_optional(pool)
     .await
 }

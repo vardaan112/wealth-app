@@ -574,13 +574,18 @@ async fn get_or_create_snaptrade_user(
     if let Some(connection) =
         provider_connections::find_provider_connection(pool, user_id, "snaptrade").await?
     {
-        let Some(snaptrade_user_id) = connection.external_item_id else {
+        let Some(snaptrade_user_id) = connection.provider_user_id else {
             return Err(async_graphql::Error::new(
                 "SnapTrade connection is missing user id",
             ));
         };
-        let user_secret = encryption::decrypt_string(&connection.encrypted_access_token)
-            .map_err(graphql_error)?;
+        let Some(encrypted_user_secret) = connection.encrypted_user_secret else {
+            return Err(async_graphql::Error::new(
+                "SnapTrade connection is missing user secret",
+            ));
+        };
+        let user_secret =
+            encryption::decrypt_string(&encrypted_user_secret).map_err(graphql_error)?;
 
         return Ok((snaptrade_user_id, user_secret));
     }
@@ -595,11 +600,17 @@ async fn get_or_create_snaptrade_user(
 
     provider_connections::upsert_provider_connection(
         pool,
-        user_id,
-        "snaptrade",
-        Some(&snaptrade_user.user_id),
-        &encrypted_user_secret,
-        "registered",
+        provider_connections::UpsertProviderConnectionInput {
+            user_id,
+            provider: "snaptrade",
+            provider_item_id: None,
+            provider_user_id: Some(&snaptrade_user.user_id),
+            encrypted_access_token: None,
+            encrypted_refresh_token: None,
+            encrypted_user_secret: Some(&encrypted_user_secret),
+            sync_cursor: None,
+            status: "active",
+        },
     )
     .await?;
 
@@ -997,11 +1008,17 @@ impl MutationRoot {
 
         provider_connections::upsert_provider_connection(
             pool,
-            user_id,
-            "plaid",
-            Some(&exchange.item_id),
-            &encrypted_access_token,
-            "connected",
+            provider_connections::UpsertProviderConnectionInput {
+                user_id,
+                provider: "plaid",
+                provider_item_id: Some(&exchange.item_id),
+                provider_user_id: None,
+                encrypted_access_token: Some(&encrypted_access_token),
+                encrypted_refresh_token: None,
+                encrypted_user_secret: None,
+                sync_cursor: None,
+                status: "active",
+            },
         )
         .await?;
 
