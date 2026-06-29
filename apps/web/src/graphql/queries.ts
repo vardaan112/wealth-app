@@ -120,6 +120,19 @@ export const IMPORT_TRANSACTIONS_CSV_MUTATION = `
   }
 `
 
+export const TRIGGER_MOCK_SYNC_MUTATION = `
+  mutation TriggerMockSync {
+    triggerMockSync {
+      accountsSynced
+      transactionsSynced
+      holdingsSynced
+      investmentTransactionsSynced
+      balanceSnapshotsSynced
+      errors
+    }
+  }
+`
+
 export const HOLDINGS_QUERY = `
   query Holdings {
     holdings {

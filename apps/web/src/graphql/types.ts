@@ -116,6 +116,15 @@ export type CsvImportResult = {
   errors: string[]
 }
 
+export type SyncResult = {
+  accountsSynced: number
+  transactionsSynced: number
+  holdingsSynced: number
+  investmentTransactionsSynced: number
+  balanceSnapshotsSynced: number
+  errors: string[]
+}
+
 export type CreateManualAccountMutation = {
   createManualAccount: Account
 }
@@ -130,6 +139,10 @@ export type CreateManualHoldingMutation = {
 
 export type ImportTransactionsCsvMutation = {
   importTransactionsCsv: CsvImportResult
+}
+
+export type TriggerMockSyncMutation = {
+  triggerMockSync: SyncResult
 }
 
 export type LoginInput = {
