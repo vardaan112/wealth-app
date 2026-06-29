@@ -1,5 +1,12 @@
-use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Schema, SimpleObject};
+use async_graphql::{Context, EmptySubscription, InputObject, Object, Schema, SimpleObject, ID};
+use chrono::NaiveDate;
 use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::repositories;
+use crate::repositories::accounts;
+use crate::repositories::holdings;
+use crate::repositories::transactions;
 
 const API_VERSION: &str = "0.1.0";
 
@@ -41,6 +48,8 @@ struct Transaction {
     amount: Money,
     #[graphql(name = "categoryPrimary")]
     category_primary: String,
+    #[graphql(name = "categoryDetailed")]
+    category_detailed: Option<String>,
     #[graphql(name = "transactionDate")]
     transaction_date: String,
     #[graphql(name = "transactionType")]
@@ -107,6 +116,57 @@ struct NetWorthPoint {
     debt: Money,
 }
 
+#[derive(InputObject)]
+struct ManualAccountInput {
+    name: String,
+    #[graphql(name = "accountType")]
+    account_type: String,
+    provider: Option<String>,
+    currency: Option<String>,
+}
+
+#[derive(InputObject)]
+struct ManualTransactionInput {
+    #[graphql(name = "accountId")]
+    account_id: ID,
+    #[graphql(name = "amountCents")]
+    amount_cents: i64,
+    currency: Option<String>,
+    #[graphql(name = "merchantName")]
+    merchant_name: Option<String>,
+    #[graphql(name = "rawDescription")]
+    raw_description: Option<String>,
+    #[graphql(name = "categoryPrimary")]
+    category_primary: Option<String>,
+    #[graphql(name = "categoryDetailed")]
+    category_detailed: Option<String>,
+    #[graphql(name = "transactionDate")]
+    transaction_date: String,
+    pending: Option<bool>,
+    #[graphql(name = "transactionType")]
+    transaction_type: Option<String>,
+    notes: Option<String>,
+}
+
+#[derive(InputObject)]
+struct ManualHoldingInput {
+    #[graphql(name = "accountId")]
+    account_id: ID,
+    symbol: String,
+    #[graphql(name = "assetName")]
+    asset_name: Option<String>,
+    #[graphql(name = "assetType")]
+    asset_type: Option<String>,
+    quantity: f64,
+    #[graphql(name = "marketValueCents")]
+    market_value_cents: Option<i64>,
+    #[graphql(name = "costBasisCents")]
+    cost_basis_cents: Option<i64>,
+    #[graphql(name = "priceCents")]
+    price_cents: Option<i64>,
+    currency: Option<String>,
+}
+
 fn mock_user() -> User {
     User {
         id: "user-001".into(),
@@ -167,6 +227,7 @@ fn mock_transactions() -> Vec<Transaction> {
                 currency: "USD".into(),
             },
             category_primary: "Groceries".into(),
+            category_detailed: Some("Supermarkets".into()),
             transaction_date: "2026-06-25".into(),
             transaction_type: "debit".into(),
             pending: false,
@@ -180,6 +241,7 @@ fn mock_transactions() -> Vec<Transaction> {
                 currency: "USD".into(),
             },
             category_primary: "Income".into(),
+            category_detailed: Some("Payroll".into()),
             transaction_date: "2026-06-15".into(),
             transaction_type: "credit".into(),
             pending: false,
@@ -193,6 +255,7 @@ fn mock_transactions() -> Vec<Transaction> {
                 currency: "USD".into(),
             },
             category_primary: "Entertainment".into(),
+            category_detailed: Some("Streaming".into()),
             transaction_date: "2026-06-12".into(),
             transaction_type: "debit".into(),
             pending: false,
@@ -206,6 +269,7 @@ fn mock_transactions() -> Vec<Transaction> {
                 currency: "USD".into(),
             },
             category_primary: "Transportation".into(),
+            category_detailed: Some("Fuel".into()),
             transaction_date: "2026-06-10".into(),
             transaction_type: "debit".into(),
             pending: false,
@@ -219,6 +283,7 @@ fn mock_transactions() -> Vec<Transaction> {
                 currency: "USD".into(),
             },
             category_primary: "Transfer".into(),
+            category_detailed: Some("Savings".into()),
             transaction_date: "2026-06-01".into(),
             transaction_type: "credit".into(),
             pending: false,
@@ -232,6 +297,7 @@ fn mock_transactions() -> Vec<Transaction> {
                 currency: "USD".into(),
             },
             category_primary: "Shopping".into(),
+            category_detailed: Some("Online".into()),
             transaction_date: "2026-06-28".into(),
             transaction_type: "debit".into(),
             pending: true,
@@ -472,6 +538,71 @@ fn mock_net_worth_timeline() -> Vec<NetWorthPoint> {
     ]
 }
 
+fn parse_uuid(id: &ID, field: &str) -> Result<Uuid, async_graphql::Error> {
+    Uuid::parse_str(id.as_str())
+        .map_err(|e| async_graphql::Error::new(format!("invalid {field}: {e}")))
+}
+
+fn parse_date(value: &str, field: &str) -> Result<NaiveDate, async_graphql::Error> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|e| {
+        async_graphql::Error::new(format!("invalid {field}; expected YYYY-MM-DD: {e}"))
+    })
+}
+
+fn account_from_record(record: accounts::AccountRecord) -> Account {
+    Account {
+        id: record.id.to_string(),
+        name: record.name,
+        account_type: record.account_type,
+        provider: record.provider,
+        currency: record.currency.clone(),
+        balance: Money {
+            amount_cents: 0,
+            currency: record.currency,
+        },
+        is_active: record.is_active,
+    }
+}
+
+fn transaction_from_record(record: transactions::TransactionRecord) -> Transaction {
+    Transaction {
+        id: record.id.to_string(),
+        account_id: record.account_id.to_string(),
+        merchant_name: record
+            .merchant_name
+            .or(record.raw_description)
+            .unwrap_or_else(|| "Manual transaction".to_string()),
+        amount: Money {
+            amount_cents: record.amount_cents,
+            currency: record.currency,
+        },
+        category_primary: record
+            .category_primary
+            .unwrap_or_else(|| "Uncategorized".to_string()),
+        category_detailed: record.category_detailed,
+        transaction_date: record.transaction_date.to_string(),
+        transaction_type: record.transaction_type,
+        pending: record.pending,
+    }
+}
+
+fn holding_from_record(record: holdings::HoldingRecord) -> Holding {
+    Holding {
+        id: record.id.to_string(),
+        account_id: record.account_id.to_string(),
+        symbol: record.symbol,
+        asset_name: record
+            .asset_name
+            .unwrap_or_else(|| "Manual asset".to_string()),
+        asset_type: record.asset_type,
+        quantity: record.quantity,
+        market_value: Money {
+            amount_cents: record.market_value_cents.unwrap_or_default(),
+            currency: record.currency,
+        },
+    }
+}
+
 pub struct QueryRoot;
 
 #[Object]
@@ -514,10 +645,136 @@ impl QueryRoot {
     }
 }
 
-pub type AppSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
+pub struct MutationRoot;
+
+#[Object]
+impl MutationRoot {
+    async fn create_manual_account(
+        &self,
+        ctx: &Context<'_>,
+        input: ManualAccountInput,
+    ) -> Result<Account, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+
+        let account = accounts::create_account(
+            pool,
+            user_id,
+            accounts::CreateAccountInput {
+                provider: input.provider,
+                provider_account_id: None,
+                account_type: input.account_type,
+                name: input.name,
+                official_name: None,
+                mask: None,
+                currency: input.currency,
+            },
+        )
+        .await?;
+
+        Ok(account_from_record(account))
+    }
+
+    async fn create_manual_transaction(
+        &self,
+        ctx: &Context<'_>,
+        input: ManualTransactionInput,
+    ) -> Result<Transaction, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let account_id = parse_uuid(&input.account_id, "accountId")?;
+        let transaction_date = parse_date(&input.transaction_date, "transactionDate")?;
+
+        let transaction = transactions::create_transaction(
+            pool,
+            user_id,
+            transactions::CreateTransactionInput {
+                account_id,
+                provider: Some("manual".to_string()),
+                provider_transaction_id: None,
+                amount_cents: input.amount_cents,
+                currency: input.currency,
+                merchant_name: input.merchant_name,
+                raw_description: input.raw_description,
+                category_primary: input.category_primary,
+                category_detailed: input.category_detailed,
+                transaction_date,
+                authorized_date: None,
+                pending: input.pending,
+                transaction_type: input.transaction_type,
+                notes: input.notes,
+            },
+        )
+        .await?;
+
+        Ok(transaction_from_record(transaction))
+    }
+
+    async fn update_transaction_category(
+        &self,
+        ctx: &Context<'_>,
+        id: ID,
+        #[graphql(name = "categoryPrimary")] category_primary: String,
+        #[graphql(name = "categoryDetailed")] category_detailed: Option<String>,
+    ) -> Result<Transaction, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::dev_user_id();
+        let transaction_id = parse_uuid(&id, "id")?;
+
+        let Some(transaction) = transactions::update_transaction_category(
+            pool,
+            user_id,
+            transaction_id,
+            category_primary,
+            category_detailed,
+        )
+        .await?
+        else {
+            return Err(async_graphql::Error::new("transaction not found"));
+        };
+
+        Ok(transaction_from_record(transaction))
+    }
+
+    async fn create_manual_holding(
+        &self,
+        ctx: &Context<'_>,
+        input: ManualHoldingInput,
+    ) -> Result<Holding, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = repositories::ensure_dev_user(pool).await?;
+        let account_id = parse_uuid(&input.account_id, "accountId")?;
+
+        let Some(holding) = holdings::upsert_holding(
+            pool,
+            user_id,
+            holdings::UpsertHoldingInput {
+                account_id,
+                provider: Some("manual".to_string()),
+                provider_holding_id: None,
+                symbol: input.symbol,
+                asset_name: input.asset_name,
+                asset_type: input.asset_type,
+                quantity: input.quantity,
+                market_value_cents: input.market_value_cents,
+                cost_basis_cents: input.cost_basis_cents,
+                price_cents: input.price_cents,
+                currency: input.currency,
+            },
+        )
+        .await?
+        else {
+            return Err(async_graphql::Error::new("account not found"));
+        };
+
+        Ok(holding_from_record(holding))
+    }
+}
+
+pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
 pub fn build_schema(pool: PgPool) -> AppSchema {
-    Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
+    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(pool)
         .finish()
 }

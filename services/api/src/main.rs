@@ -3,7 +3,7 @@ mod db;
 mod graphql;
 mod repositories;
 
-use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
+use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql::{Request, ServerError, Variables};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
@@ -65,10 +65,7 @@ async fn graphql_get_handler(
     GraphQLResponse::from(state.schema.execute(request).await).into_response()
 }
 
-async fn graphql_handler(
-    State(state): State<AppState>,
-    req: GraphQLRequest,
-) -> GraphQLResponse {
+async fn graphql_handler(State(state): State<AppState>, req: GraphQLRequest) -> GraphQLResponse {
     state.schema.execute(req.into_inner()).await.into()
 }
 
@@ -96,10 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         schema: graphql::build_schema(pool.clone()),
         pool,
     };
-    tracing::info!(
-        "Connected to database (pool size: {})",
-        state.pool.size()
-    );
+    tracing::info!("Connected to database (pool size: {})", state.pool.size());
 
     let cors = CorsLayer::new()
         .allow_origin(

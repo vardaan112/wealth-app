@@ -105,9 +105,9 @@ pub async fn create_transaction(
             transaction_type,
             notes
         )
-        VALUES (
+        SELECT
             $1,
-            $2,
+            accounts.id,
             COALESCE($3, 'manual'),
             $4,
             $5,
@@ -121,7 +121,9 @@ pub async fn create_transaction(
             COALESCE($13, FALSE),
             COALESCE($14, 'expense'),
             $15
-        )
+        FROM accounts
+        WHERE accounts.id = $2
+          AND accounts.user_id = $1
         RETURNING
             id,
             user_id,
@@ -166,12 +168,15 @@ pub async fn update_transaction_category(
     pool: &PgPool,
     user_id: Uuid,
     transaction_id: Uuid,
-    category: String,
+    category_primary: String,
+    category_detailed: Option<String>,
 ) -> Result<Option<TransactionRecord>, sqlx::Error> {
     sqlx::query_as::<_, TransactionRecord>(
         r#"
         UPDATE transactions
-        SET category_primary = $3
+        SET
+            category_primary = $3,
+            category_detailed = $4
         WHERE user_id = $1
           AND id = $2
         RETURNING
@@ -197,7 +202,8 @@ pub async fn update_transaction_category(
     )
     .bind(user_id)
     .bind(transaction_id)
-    .bind(category)
+    .bind(category_primary)
+    .bind(category_detailed)
     .fetch_optional(pool)
     .await
 }
