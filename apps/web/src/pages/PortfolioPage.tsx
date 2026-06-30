@@ -5,10 +5,12 @@ import { Modal } from '../components/Modal'
 import { PlaceholderCard } from '../components/PlaceholderCard'
 import { useAccounts } from '../hooks/useAccounts'
 import { useHoldings } from '../hooks/useHoldings'
+import {
+  allocationColors,
+  buildHoldingsAllocation,
+} from '../lib/allocation'
 import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
 import { formatMoney } from '../lib/format'
-
-const allocationColors = ['#7c9cff', '#8b95a5', '#5f6876', '#343b46']
 
 export function PortfolioPage() {
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false)
@@ -20,19 +22,7 @@ export function PortfolioPage() {
     (total, holding) => total + holding.marketValue.amountCents,
     0,
   )
-  const allocationData = Object.entries(
-    holdings.reduce<Record<string, number>>((groups, holding) => {
-      groups[holding.assetType] =
-        (groups[holding.assetType] ?? 0) + holding.marketValue.amountCents
-      return groups
-    }, {}),
-  )
-    .map(([assetType, value]) => ({
-      assetType,
-      value,
-      percent: totalValue > 0 ? (value / totalValue) * 100 : 0,
-    }))
-    .sort((a, b) => b.value - a.value)
+  const allocationData = buildHoldingsAllocation(holdings)
 
   return (
     <div className="animate-rise mx-auto flex max-w-5xl flex-col gap-8 pt-6">
@@ -62,7 +52,7 @@ export function PortfolioPage() {
               : 'No manual holdings yet.'
           }
         />
-        <PlaceholderCard title="Allocation" description="By asset type.">
+        <PlaceholderCard title="Allocation" description="By holding symbol.">
           {allocationData.length === 0 ? (
             <p className="text-sm text-muted">No allocation yet.</p>
           ) : (
@@ -73,12 +63,21 @@ export function PortfolioPage() {
                     <Tooltip
                       contentStyle={chartTooltipStyle}
                       labelStyle={chartLabelStyle}
-                      formatter={(value) => formatCents(Number(value))}
+                      formatter={(value, _name, item) => {
+                        const payload = item.payload as {
+                          label: string
+                          assetType: string
+                        }
+                        return [
+                          formatCents(Number(value)),
+                          `${payload.label} (${payload.assetType})`,
+                        ]
+                      }}
                     />
                     <Pie
                       data={allocationData}
                       dataKey="value"
-                      nameKey="assetType"
+                      nameKey="label"
                       innerRadius="62%"
                       outerRadius="86%"
                       paddingAngle={2}
@@ -87,31 +86,38 @@ export function PortfolioPage() {
                     >
                       {allocationData.map((entry, index) => (
                         <Cell
-                          key={entry.assetType}
-                          fill={allocationColors[index % allocationColors.length]}
+                          key={entry.label}
+                          fill={
+                            allocationColors[index % allocationColors.length]
+                          }
                         />
                       ))}
                     </Pie>
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="space-y-3">
+              <div className="max-h-44 space-y-3 overflow-y-auto pr-1">
                 {allocationData.map((entry, index) => (
                   <div
-                    key={entry.assetType}
+                    key={entry.label}
                     className="flex items-center justify-between gap-4 text-sm"
                   >
                     <span className="flex min-w-0 items-center gap-2 text-text/90">
                       <span
-                        className="size-2 rounded-full"
+                        className="size-2 shrink-0 rounded-full"
                         style={{
                           backgroundColor:
                             allocationColors[index % allocationColors.length],
                         }}
                       />
-                      <span className="truncate">{entry.assetType}</span>
+                      <span className="truncate">
+                        {entry.label}
+                        {entry.label !== 'Other' ? (
+                          <span className="text-muted"> · {entry.assetType}</span>
+                        ) : null}
+                      </span>
                     </span>
-                    <span className="text-xs text-muted">
+                    <span className="shrink-0 text-xs text-muted">
                       {entry.percent.toFixed(1)}%
                     </span>
                   </div>
