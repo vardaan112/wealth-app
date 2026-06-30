@@ -199,3 +199,30 @@ export type SignUpMutation = {
     user: User
   }
 }
+
+export type ChatMessage = {
+  id: string
+  role: string
+  content: string
+  isBriefing: boolean
+  createdAt: string
+}
+
+export type ChatMessagesQuery = {
+  chatMessages: {
+    messages: ChatMessage[]
+    lastBriefingAt?: string | null
+  }
+}
+
+export type SendChatMessageInput = {
+  content: string
+  isBriefing?: boolean | null
+}
+
+export type SendChatMessageMutation = {
+  sendChatMessage: {
+    userMessage: ChatMessage
+    assistantMessage: ChatMessage
+  }
+}

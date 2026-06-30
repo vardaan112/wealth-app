@@ -7,11 +7,13 @@ use uuid::Uuid;
 use crate::auth;
 use crate::providers::{MockProvider, PlaidClient, SnapTradeClient};
 use crate::repositories::accounts;
+use crate::repositories::chat_messages;
 use crate::repositories::holdings;
 use crate::repositories::provider_connections;
 use crate::repositories::transactions;
 use crate::repositories::users;
 use crate::security::encryption;
+use crate::services::chat;
 use crate::services::csv_import;
 use crate::services::plaid_sync;
 use crate::services::provider_sync;
@@ -233,6 +235,39 @@ struct CsvImportInput {
     source: String,
     #[graphql(name = "csvText")]
     csv_text: String,
+}
+
+#[derive(SimpleObject, Clone)]
+struct ChatMessage {
+    id: String,
+    role: String,
+    content: String,
+    #[graphql(name = "isBriefing")]
+    is_briefing: bool,
+    #[graphql(name = "createdAt")]
+    created_at: String,
+}
+
+#[derive(SimpleObject, Clone)]
+struct ChatMessagesPayload {
+    messages: Vec<ChatMessage>,
+    #[graphql(name = "lastBriefingAt")]
+    last_briefing_at: Option<String>,
+}
+
+#[derive(SimpleObject, Clone)]
+struct SendChatMessagePayload {
+    #[graphql(name = "userMessage")]
+    user_message: ChatMessage,
+    #[graphql(name = "assistantMessage")]
+    assistant_message: ChatMessage,
+}
+
+#[derive(InputObject)]
+struct SendChatMessageInput {
+    content: String,
+    #[graphql(name = "isBriefing")]
+    is_briefing: Option<bool>,
 }
 
 #[derive(InputObject)]
@@ -513,6 +548,16 @@ fn transaction_from_record(record: transactions::TransactionRecord) -> Transacti
         transaction_date: record.transaction_date.to_string(),
         transaction_type: record.transaction_type,
         pending: record.pending,
+    }
+}
+
+fn chat_message_from_record(record: chat_messages::ChatMessageRecord) -> ChatMessage {
+    ChatMessage {
+        id: record.id.to_string(),
+        role: record.role,
+        content: record.content,
+        is_briefing: record.is_briefing,
+        created_at: record.created_at.to_rfc3339(),
     }
 }
 
@@ -800,6 +845,27 @@ impl QueryRoot {
             .into_iter()
             .map(net_worth_point_from_snapshot)
             .collect())
+    }
+
+    async fn chat_messages(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<ChatMessagesPayload, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let records = chat_messages::list_chat_messages(pool, user_id).await?;
+        let last_briefing_at = chat_messages::last_briefing_at(pool, user_id)
+            .await?
+            .map(|timestamp| timestamp.to_rfc3339());
+
+        Ok(ChatMessagesPayload {
+            messages: records
+                .into_iter()
+                .filter(|record| record.role != "system")
+                .map(chat_message_from_record)
+                .collect(),
+            last_briefing_at,
+        })
     }
 }
 
@@ -1138,6 +1204,24 @@ impl MutationRoot {
             .map_err(graphql_error)?;
 
         Ok(sync_result_from_service(result))
+    }
+
+    async fn send_chat_message(
+        &self,
+        ctx: &Context<'_>,
+        input: SendChatMessageInput,
+    ) -> Result<SendChatMessagePayload, async_graphql::Error> {
+        let pool = ctx.data::<PgPool>()?;
+        let user_id = current_user(ctx)?.id;
+        let is_briefing = input.is_briefing.unwrap_or(false);
+        let result = chat::send_chat_message(pool, user_id, &input.content, is_briefing)
+            .await
+            .map_err(graphql_error)?;
+
+        Ok(SendChatMessagePayload {
+            user_message: chat_message_from_record(result.user_message),
+            assistant_message: chat_message_from_record(result.assistant_message),
+        })
     }
 }
 

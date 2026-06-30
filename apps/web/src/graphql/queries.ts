@@ -259,3 +259,39 @@ export const NET_WORTH_TIMELINE_QUERY = `
     }
   }
 `
+
+export const CHAT_MESSAGES_QUERY = `
+  query ChatMessages {
+    chatMessages {
+      messages {
+        id
+        role
+        content
+        isBriefing
+        createdAt
+      }
+      lastBriefingAt
+    }
+  }
+`
+
+export const SEND_CHAT_MESSAGE_MUTATION = `
+  mutation SendChatMessage($input: SendChatMessageInput!) {
+    sendChatMessage(input: $input) {
+      userMessage {
+        id
+        role
+        content
+        isBriefing
+        createdAt
+      }
+      assistantMessage {
+        id
+        role
+        content
+        isBriefing
+        createdAt
+      }
+    }
+  }
+`

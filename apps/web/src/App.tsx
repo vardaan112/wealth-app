@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import { AppShell } from './components/AppShell'
+import { AdvisorPage } from './pages/AdvisorPage'
 import { CashFlowPage } from './pages/CashFlowPage'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
@@ -25,6 +26,7 @@ function App() {
           <Route index element={<HomePage />} />
           <Route path="cash-flow" element={<CashFlowPage />} />
           <Route path="portfolio" element={<PortfolioPage />} />
+          <Route path="advisor" element={<AdvisorPage />} />
           <Route path="timeline" element={<TimelinePage />} />
           <Route path="transactions" element={<TransactionsPage />} />
           <Route path="settings" element={<SettingsPage />} />

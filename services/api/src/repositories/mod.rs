@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod accounts;
+pub mod chat_messages;
 pub mod holdings;
 pub mod import_batches;
 pub mod provider_connections;

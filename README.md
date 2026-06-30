@@ -39,6 +39,14 @@ docker compose up -d
 
 That deletes the local Postgres volume and recreates it with all SQL files in `infra/migrations`.
 
+To apply a new migration against an **existing** local Postgres volume without resetting data:
+
+```bash
+docker compose exec -T postgres psql -U wealth_user -d wealth_app -f /docker-entrypoint-initdb.d/0003_chat_messages.sql
+```
+
+(Replace the filename with any new migration under `infra/migrations/`.)
+
 ### 2. Configure the API environment
 
 ```bash
@@ -60,7 +68,11 @@ PLAID_ENV=sandbox
 PLAID_REDIRECT_URI=http://localhost:5173/plaid-oauth
 SNAPTRADE_CLIENT_ID=your-snaptrade-client-id
 SNAPTRADE_CONSUMER_KEY=your-snaptrade-consumer-key
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
 ```
+
+`OPENAI_API_KEY` powers the **Advisor** chat page. `OPENAI_MODEL` is optional and defaults to `gpt-4o-mini`.
 
 `PLAID_REDIRECT_URI` is optional and defaults to `http://localhost:5173/plaid-oauth`. It is required for OAuth banks (see [Plaid OAuth banks](#plaid-oauth-banks-eg-chase) below).
 
@@ -107,6 +119,15 @@ npm run dev
 ```
 
 Web app runs on `http://localhost:5173` and proxies `/graphql` and `/health` to the API.
+
+### Advisor chat
+
+1. Set `OPENAI_API_KEY` in `services/api/.env` (see `.env.example`).
+2. Restart the Rust API after changing env vars.
+3. Open **Advisor** in the sidebar (`/advisor`).
+4. Ask follow-up questions about your holdings, or click **Generate daily briefing** for buy/hold/sell-style alerts based on synced Robinhood/SnapTrade holdings.
+
+Conversation history is stored per user in Postgres (`chat_messages`).
 
 ## Provider Setup
 
