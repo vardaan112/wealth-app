@@ -39,6 +39,7 @@ export type Holding = {
   assetType: string
   quantity: number
   marketValue: Money
+  costBasis?: Money | null
 }
 
 export type CategorySpend = {

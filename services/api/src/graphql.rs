@@ -88,6 +88,8 @@ struct Holding {
     quantity: f64,
     #[graphql(name = "marketValue")]
     market_value: Money,
+    #[graphql(name = "costBasis")]
+    cost_basis: Option<Money>,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -439,6 +441,10 @@ fn mock_holdings() -> Vec<Holding> {
                 amount_cents: 28_450_00,
                 currency: "USD".into(),
             },
+            cost_basis: Some(Money {
+                amount_cents: 24_000_00,
+                currency: "USD".into(),
+            }),
         },
         Holding {
             id: "hold-002".into(),
@@ -451,6 +457,10 @@ fn mock_holdings() -> Vec<Holding> {
                 amount_cents: 9_875_00,
                 currency: "USD".into(),
             },
+            cost_basis: Some(Money {
+                amount_cents: 8_500_00,
+                currency: "USD".into(),
+            }),
         },
         Holding {
             id: "hold-003".into(),
@@ -463,6 +473,10 @@ fn mock_holdings() -> Vec<Holding> {
                 amount_cents: 14_820_00,
                 currency: "USD".into(),
             },
+            cost_basis: Some(Money {
+                amount_cents: 15_000_00,
+                currency: "USD".into(),
+            }),
         },
     ]
 }
@@ -573,8 +587,12 @@ fn holding_from_record(record: holdings::HoldingRecord) -> Holding {
         quantity: record.quantity,
         market_value: Money {
             amount_cents: record.market_value_cents.unwrap_or_default(),
-            currency: record.currency,
+            currency: record.currency.clone(),
         },
+        cost_basis: record.cost_basis_cents.map(|amount_cents| Money {
+            amount_cents,
+            currency: record.currency,
+        }),
     }
 }
 
@@ -1098,6 +1116,7 @@ impl MutationRoot {
         let user_id = current_user(ctx)?.id;
         let provider = MockProvider::new();
         let result = provider_sync::sync_provider(pool, user_id, &provider).await?;
+        snapshot_service::create_today_portfolio_snapshot(pool, user_id).await?;
 
         Ok(sync_result_from_service(result))
     }
@@ -1202,6 +1221,7 @@ impl MutationRoot {
         let result = snaptrade_sync::sync_snaptrade_accounts(pool, user_id)
             .await
             .map_err(graphql_error)?;
+        snapshot_service::create_today_portfolio_snapshot(pool, user_id).await?;
 
         Ok(sync_result_from_service(result))
     }

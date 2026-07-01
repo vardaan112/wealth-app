@@ -11,6 +11,46 @@ import {
 } from '../lib/allocation'
 import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
 import { formatMoney } from '../lib/format'
+import {
+  formatGainLoss,
+  holdingCostBasis,
+  holdingGainLoss,
+  sumCostBasis,
+} from '../lib/holdings'
+import type { Holding } from '../graphql/types'
+
+function HoldingRow({ holding }: { holding: Holding }) {
+  const costBasis = holdingCostBasis(holding)
+  const gainLoss = holdingGainLoss(holding)
+
+  return (
+    <li className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+      <div className="min-w-0">
+        <p className="truncate text-sm text-text/90">{holding.symbol}</p>
+        <p className="mt-0.5 text-xs text-muted">
+          {holding.assetName} / {holding.quantity}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="text-sm tabular-nums text-text/90">
+          {formatMoney(holding.marketValue)}
+        </p>
+        <p className="mt-0.5 text-xs tabular-nums text-muted">
+          {costBasis ? `${formatMoney(costBasis)} invested` : '\u2014 invested'}
+        </p>
+        {gainLoss ? (
+          <p
+            className={`mt-0.5 text-xs tabular-nums ${
+              gainLoss.amountCents >= 0 ? 'text-accent' : 'text-muted'
+            }`}
+          >
+            {formatGainLoss(gainLoss)}
+          </p>
+        ) : null}
+      </div>
+    </li>
+  )
+}
 
 export function PortfolioPage() {
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false)
@@ -22,6 +62,7 @@ export function PortfolioPage() {
     (total, holding) => total + holding.marketValue.amountCents,
     0,
   )
+  const totalCostBasis = sumCostBasis(holdings)
   const allocationData = buildHoldingsAllocation(holdings)
 
   return (
@@ -48,7 +89,11 @@ export function PortfolioPage() {
           title="Total value"
           description={
             holdings.length
-              ? `${formatMoney({ amountCents: totalValue, currency: 'USD' })} across holdings.`
+              ? `${formatMoney({ amountCents: totalValue, currency: 'USD' })} across holdings${
+                  totalCostBasis > 0
+                    ? ` · ${formatMoney({ amountCents: totalCostBasis, currency: 'USD' })} invested`
+                    : ''
+                }.`
               : 'No manual holdings yet.'
           }
         />
@@ -127,8 +172,9 @@ export function PortfolioPage() {
           )}
         </PlaceholderCard>
         <PlaceholderCard
-          title="Manual holdings"
-          description="Current entries from GraphQL."
+          title="Holdings"
+          description="Current value and cost basis per position."
+          className="sm:col-span-2"
         >
           {holdingsResult.fetching ? (
             <p className="text-sm text-muted">Loading holdings...</p>
@@ -139,22 +185,7 @@ export function PortfolioPage() {
           ) : (
             <ul className="divide-y divide-white/[0.05]">
               {holdings.map((holding) => (
-                <li
-                  key={holding.id}
-                  className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm text-text/90">
-                      {holding.symbol}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted">
-                      {holding.assetName} / {holding.quantity}
-                    </p>
-                  </div>
-                  <span className="text-sm tabular-nums text-text/90">
-                    {formatMoney(holding.marketValue)}
-                  </span>
-                </li>
+                <HoldingRow key={holding.id} holding={holding} />
               ))}
             </ul>
           )}

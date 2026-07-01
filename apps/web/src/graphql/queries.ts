@@ -203,6 +203,10 @@ export const HOLDINGS_QUERY = `
         amountCents
         currency
       }
+      costBasis {
+        amountCents
+        currency
+      }
     }
   }
 `

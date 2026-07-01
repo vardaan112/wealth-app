@@ -6,6 +6,7 @@ import { useNetWorthTimeline } from '../hooks/useNetWorthTimeline'
 import { useTransactions } from '../hooks/useTransactions'
 import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
 import { formatMoney, formatPercent } from '../lib/format'
+import { sumCostBasis } from '../lib/holdings'
 import type { Money, NetWorthPoint, Transaction } from '../graphql/types'
 
 function money(amountCents: number): Money {
@@ -67,6 +68,7 @@ export function HomePage() {
   const investmentValue = holdings.length
     ? sumMoney(holdings.map((holding) => holding.marketValue))
     : latestPoint?.investments
+  const investedTotal = sumCostBasis(holdings)
   const delta = trendDelta(timeline)
   const chartData = timeline.map((point) => ({
     date: point.date,
@@ -156,7 +158,14 @@ export function HomePage() {
         <div className="mt-2 grid grid-cols-3 gap-px overflow-hidden rounded-2xl bg-white/[0.05]">
           {[
             { label: 'Cash', value: latestPoint?.cash },
-            { label: 'Investments', value: investmentValue },
+            {
+              label: 'Investments',
+              value: investmentValue,
+              hint:
+                investedTotal > 0
+                  ? `${formatMoney({ amountCents: investedTotal, currency: 'USD' })} invested`
+                  : undefined,
+            },
             { label: 'Debt', value: latestPoint?.debt },
           ].map((item) => (
             <div key={item.label} className="bg-background/40 px-4 py-4">
@@ -166,6 +175,9 @@ export function HomePage() {
               <p className="mt-2 text-base font-medium tracking-tight text-text">
                 {item.value ? formatMoney(item.value) : '\u2014'}
               </p>
+              {'hint' in item && item.hint ? (
+                <p className="mt-1 text-xs text-muted">{item.hint}</p>
+              ) : null}
             </div>
           ))}
         </div>
