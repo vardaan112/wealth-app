@@ -1,5 +1,5 @@
 import type { Holding, Money } from '../graphql/types'
-import { formatMoney, formatPercent } from './format'
+import { formatMoney } from './format'
 
 export type HoldingGainLoss = {
   amountCents: number
@@ -21,13 +21,18 @@ export function holdingGainLoss(holding: Holding): HoldingGainLoss | null {
   return { amountCents, percent }
 }
 
+function formatSignedPercent(percent: number): string {
+  const sign = percent >= 0 ? '+' : '\u2212'
+  return `${sign}${Math.abs(percent).toFixed(1)}%`
+}
+
 export function formatGainLoss(gainLoss: HoldingGainLoss): string {
-  const sign = gainLoss.amountCents >= 0 ? '+' : '-'
+  const sign = gainLoss.amountCents >= 0 ? '+' : '\u2212'
   const amount = formatMoney({
     amountCents: Math.abs(gainLoss.amountCents),
     currency: 'USD',
   })
-  return `${sign}${amount} (${formatPercent(gainLoss.percent / 100)})`
+  return `${sign}${amount} (${formatSignedPercent(gainLoss.percent)})`
 }
 
 export function sumCostBasis(holdings: Holding[]): number {
