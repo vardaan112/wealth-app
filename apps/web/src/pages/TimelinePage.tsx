@@ -1,13 +1,19 @@
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useNetWorthTimeline } from '../hooks/useNetWorthTimeline'
-import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
+import {
+  centsToChartValue,
+  chartLabelStyle,
+  chartTooltipStyle,
+  formatChartAxis,
+  formatChartTooltip,
+} from '../lib/chart'
 
 export function TimelinePage() {
   const [timelineResult] = useNetWorthTimeline()
   const timeline = timelineResult.data?.netWorthTimeline ?? []
   const chartData = timeline.map((point) => ({
     date: point.date,
-    netWorth: point.netWorth.amountCents,
+    netWorth: centsToChartValue(point.netWorth.amountCents),
   }))
 
   const events = [
@@ -71,8 +77,9 @@ export function TimelinePage() {
                   cursor={{ stroke: 'rgba(124,156,255,0.3)', strokeWidth: 1 }}
                   contentStyle={chartTooltipStyle}
                   labelStyle={chartLabelStyle}
-                  formatter={(value) => [formatCents(Number(value)), 'Net worth']}
+                  formatter={(value) => [formatChartTooltip(Number(value)), 'Net worth']}
                 />
+                <YAxis hide domain={['auto', 'auto']} tickFormatter={formatChartAxis} />
                 <Line
                   type="monotone"
                   dataKey="netWorth"

@@ -19,3 +19,16 @@ export function centsToMoney(amountCents: number): Money {
 export function formatCents(amountCents: number): string {
   return formatMoney(centsToMoney(amountCents))
 }
+
+/** Recharts data values are always stored in cents. */
+export function centsToChartValue(amountCents: number): number {
+  return amountCents
+}
+
+export function formatChartTooltip(value: number | string | undefined): string {
+  return formatCents(Number(value ?? 0))
+}
+
+export function formatChartAxis(value: number): string {
+  return formatMoney(centsToMoney(value))
+}

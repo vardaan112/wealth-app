@@ -176,6 +176,8 @@ struct PlaidSyncResult {
     pending_transactions_synced: i32,
     #[graphql(name = "rawEventsStored")]
     raw_events_stored: i32,
+    #[graphql(name = "balanceSnapshotsSynced")]
+    balance_snapshots_synced: i32,
     errors: Vec<String>,
 }
 
@@ -644,6 +646,7 @@ fn plaid_sync_result_from_service(result: plaid_sync::PlaidSyncResult) -> PlaidS
         transactions_synced: result.transactions_synced,
         pending_transactions_synced: result.pending_transactions_synced,
         raw_events_stored: result.raw_events_stored,
+        balance_snapshots_synced: result.balance_snapshots_synced,
         errors: result.errors,
     }
 }

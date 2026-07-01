@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import { useQuery } from 'urql'
 import type { CategorySpend, Money } from '../graphql/types'
-import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
+import { chartLabelStyle, chartTooltipStyle, formatChartTooltip } from '../lib/chart'
 import { formatMoney } from '../lib/format'
 
 const CASH_FLOW_SUMMARIES_QUERY = `
@@ -165,7 +165,7 @@ export function CashFlowPage() {
                 cursor={{ fill: 'rgba(255,255,255,0.025)' }}
                 contentStyle={chartTooltipStyle}
                 labelStyle={chartLabelStyle}
-                formatter={(value) => formatCents(Number(value))}
+                formatter={(value) => formatChartTooltip(Number(value))}
               />
               <Bar
                 dataKey="income"
@@ -209,7 +209,7 @@ export function CashFlowPage() {
                   cursor={{ fill: 'rgba(255,255,255,0.025)' }}
                   contentStyle={chartTooltipStyle}
                   labelStyle={chartLabelStyle}
-                  formatter={(value) => formatCents(Number(value))}
+                  formatter={(value) => formatChartTooltip(Number(value))}
                 />
                 <Bar
                   dataKey="amount"

@@ -1,10 +1,15 @@
 import type { ReactNode } from 'react'
-import { Line, LineChart, ResponsiveContainer, Tooltip } from 'recharts'
+import { Line, LineChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts'
 import { useHoldings } from '../hooks/useHoldings'
 import { useMonthlySummary } from '../hooks/useMonthlySummary'
 import { useNetWorthTimeline } from '../hooks/useNetWorthTimeline'
 import { useTransactions } from '../hooks/useTransactions'
-import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
+import {
+  centsToChartValue,
+  chartLabelStyle,
+  chartTooltipStyle,
+  formatChartTooltip,
+} from '../lib/chart'
 import { formatMoney, formatPercent } from '../lib/format'
 import { sumCostBasis } from '../lib/holdings'
 import type { Money, NetWorthPoint, Transaction } from '../graphql/types'
@@ -70,16 +75,20 @@ export function HomePage() {
     : latestPoint?.investments
   const investedTotal = sumCostBasis(holdings)
   const delta = trendDelta(timeline)
-  const chartData = timeline.map((point) => ({
-    date: point.date,
-    value: point.netWorth.amountCents / 100,
-  }))
-
   const isLoading =
     timelineResult.fetching ||
     summaryResult.fetching ||
     transactionsResult.fetching ||
     holdingsResult.fetching
+  const chartData = timeline.map((point) => ({
+    date: point.date,
+    value: centsToChartValue(point.netWorth.amountCents),
+  }))
+  const netWorthLooksWrong =
+    !isLoading &&
+    latestPoint &&
+    latestPoint.netWorth.amountCents < 100 &&
+    (holdings.length > 0 || latestPoint.investments.amountCents >= 100)
 
   const error =
     timelineResult.error ||
@@ -124,6 +133,12 @@ export function HomePage() {
             </span>
           ) : null}
         </div>
+        {netWorthLooksWrong ? (
+          <p className="mt-2 text-xs text-amber-300/90">
+            Net worth looks too low compared to your holdings. Try syncing accounts
+            to refresh balances.
+          </p>
+        ) : null}
 
         <div className="mt-6 h-40 w-full sm:h-52">
           {chartData.length > 1 ? (
@@ -136,8 +151,9 @@ export function HomePage() {
                   cursor={{ stroke: 'rgba(124,156,255,0.3)', strokeWidth: 1 }}
                   contentStyle={chartTooltipStyle}
                   labelStyle={chartLabelStyle}
-                  formatter={(value) => [formatCents(Math.round(Number(value) * 100)), 'Net worth']}
+                  formatter={(value) => [formatChartTooltip(Number(value)), 'Net worth']}
                 />
+                <YAxis hide domain={['auto', 'auto']} />
                 <Line
                   type="monotone"
                   dataKey="value"

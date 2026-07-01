@@ -9,7 +9,7 @@ import {
   allocationColors,
   buildHoldingsAllocation,
 } from '../lib/allocation'
-import { chartLabelStyle, chartTooltipStyle, formatCents } from '../lib/chart'
+import { chartLabelStyle, chartTooltipStyle, formatChartTooltip } from '../lib/chart'
 import { formatMoney } from '../lib/format'
 import {
   formatGainLoss,
@@ -114,7 +114,7 @@ export function PortfolioPage() {
                           assetType: string
                         }
                         return [
-                          formatCents(Number(value)),
+                          formatChartTooltip(Number(value)),
                           `${payload.label} (${payload.assetType})`,
                         ]
                       }}

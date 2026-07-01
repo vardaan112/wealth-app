@@ -5,7 +5,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::providers::{
-    PlaidAccount, PlaidClient, PlaidTransaction, ProviderAccount, ProviderTransaction,
+    PlaidAccount, PlaidBalances, PlaidClient, PlaidTransaction, ProviderAccount,
+    ProviderBalanceSnapshot, ProviderTransaction,
 };
 use crate::repositories::provider_connections::ProviderConnectionRecord;
 use crate::repositories::{provider_connections, raw_provider_events};
@@ -29,6 +30,7 @@ pub struct PlaidSyncResult {
     pub transactions_updated: i32,
     pub pending_transactions_synced: i32,
     pub raw_events_stored: i32,
+    pub balance_snapshots_synced: i32,
     pub errors: Vec<String>,
 }
 
@@ -87,20 +89,49 @@ pub async fn sync_plaid_transactions(
         result.raw_events_stored += 1;
 
         let mut account_ids = HashMap::<String, Uuid>::new();
+        let snapshot_date = Utc::now().date_naive();
         for account in accounts.accounts {
             let external_account_id = account.account_id.clone();
             let (_, account_id) = provider_sync::upsert_provider_account(
                 pool,
                 user_id,
-                provider_account_from_plaid(account),
+                provider_account_from_plaid(account.clone()),
             )
             .await?;
 
-            account_ids.insert(external_account_id, account_id);
+            account_ids.insert(external_account_id.clone(), account_id);
             result.accounts_synced += 1;
+
+            if let Some(balance_cents) = plaid_balance_to_cents(&account.balances) {
+                let currency = account
+                    .balances
+                    .iso_currency_code
+                    .clone()
+                    .or(account.balances.unofficial_currency_code.clone())
+                    .unwrap_or_else(|| "USD".to_string());
+
+                provider_sync::upsert_provider_balance_snapshot(
+                    pool,
+                    user_id,
+                    account_id,
+                    ProviderBalanceSnapshot {
+                        provider: "plaid".to_string(),
+                        external_account_id,
+                        balance_cents,
+                        available_balance_cents: account
+                            .balances
+                            .available
+                            .map(plaid_dollars_to_cents),
+                        currency,
+                        snapshot_date,
+                    },
+                )
+                .await?;
+                result.balance_snapshots_synced += 1;
+            }
         }
 
-        let end_date = Utc::now().date_naive();
+        let end_date = snapshot_date;
         let fetch_failed = sync_transactions_for_connection(
             pool,
             user_id,
@@ -389,6 +420,17 @@ fn plaid_amount_to_cents(amount: f64) -> i64 {
     (-amount * 100.0).round() as i64
 }
 
+fn plaid_dollars_to_cents(amount: f64) -> i64 {
+    (amount * 100.0).round() as i64
+}
+
+fn plaid_balance_to_cents(balances: &PlaidBalances) -> Option<i64> {
+    balances
+        .current
+        .or(balances.available)
+        .map(plaid_dollars_to_cents)
+}
+
 fn normalize_plaid_account_type(account_type: &str, subtype: Option<&str>) -> String {
     match (account_type, subtype.unwrap_or_default()) {
         ("depository", "checking") => "checking",
@@ -508,6 +550,18 @@ mod tests {
     fn plaid_amounts_are_converted_to_app_signs() {
         assert_eq!(plaid_amount_to_cents(12.34), -1234);
         assert_eq!(plaid_amount_to_cents(-250.0), 25_000);
+    }
+
+    #[test]
+    fn plaid_balances_use_current_before_available() {
+        let balances = PlaidBalances {
+            available: Some(3_766.43),
+            current: Some(474.7),
+            iso_currency_code: Some("USD".to_string()),
+            unofficial_currency_code: None,
+        };
+
+        assert_eq!(plaid_balance_to_cents(&balances), Some(47_470));
     }
 
     #[test]
