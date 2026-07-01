@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::{FromRow, PgPool};
@@ -26,9 +28,73 @@ pub struct PortfolioSnapshot {
 
 #[derive(Debug, FromRow)]
 struct AccountBalanceInput {
+    account_id: Uuid,
     account_type: String,
     snapshot_balance_cents: Option<i64>,
     transaction_balance_cents: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct AccountHoldingsValue {
+    account_id: Uuid,
+    market_value_cents: i64,
+}
+
+fn account_balance_cents(account: &AccountBalanceInput) -> i64 {
+    account
+        .snapshot_balance_cents
+        .unwrap_or(account.transaction_balance_cents)
+}
+
+fn compute_net_worth_components(
+    accounts: &[AccountBalanceInput],
+    holdings_by_account: &HashMap<Uuid, i64>,
+    total_holdings_market_value: i64,
+) -> CurrentNetWorth {
+    let mut cash_cents = 0;
+    let mut debt_cents = 0;
+    let mut investment_value_cents = total_holdings_market_value;
+
+    for account in accounts {
+        let balance_cents = account_balance_cents(account);
+
+        match account.account_type.as_str() {
+            "checking" | "savings" | "cash" | "manual" => {
+                cash_cents += balance_cents;
+            }
+            "credit_card" => {
+                if balance_cents < 0 {
+                    debt_cents += balance_cents.abs();
+                } else {
+                    debt_cents += balance_cents;
+                }
+            }
+            "brokerage" => {
+                let holdings_for_account = holdings_by_account
+                    .get(&account.account_id)
+                    .copied()
+                    .unwrap_or(0);
+
+                if holdings_for_account == 0 && balance_cents != 0 {
+                    // No holdings synced yet; treat the account balance as investments.
+                    investment_value_cents += balance_cents;
+                } else if balance_cents > holdings_for_account {
+                    // Balance snapshots include holdings plus uninvested cash.
+                    cash_cents += balance_cents - holdings_for_account;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let net_worth_cents = cash_cents + investment_value_cents - debt_cents;
+
+    CurrentNetWorth {
+        cash_cents,
+        investment_value_cents,
+        debt_cents,
+        net_worth_cents,
+    }
 }
 
 pub async fn compute_current_net_worth(
@@ -38,6 +104,7 @@ pub async fn compute_current_net_worth(
     let account_balances = sqlx::query_as::<_, AccountBalanceInput>(
         r#"
         SELECT
+            accounts.id AS account_id,
             accounts.account_type,
             latest_balance.balance_cents AS snapshot_balance_cents,
             COALESCE(transaction_balances.balance_cents, 0)::BIGINT AS transaction_balance_cents
@@ -66,49 +133,32 @@ pub async fn compute_current_net_worth(
     .fetch_all(pool)
     .await?;
 
-    let investment_value_cents = sqlx::query_scalar::<_, Option<i64>>(
+    let account_holdings = sqlx::query_as::<_, AccountHoldingsValue>(
         r#"
-            SELECT COALESCE(SUM(COALESCE(market_value_cents, 0)), 0)::BIGINT
-            FROM holdings
-            WHERE user_id = $1
-            "#,
+        SELECT
+            account_id,
+            COALESCE(SUM(COALESCE(market_value_cents, 0)), 0)::BIGINT AS market_value_cents
+        FROM holdings
+        WHERE user_id = $1
+        GROUP BY account_id
+        "#,
     )
     .bind(user_id)
-    .fetch_one(pool)
-    .await?
-    .unwrap_or_default();
+    .fetch_all(pool)
+    .await?;
 
-    let mut cash_cents = 0;
-    let mut debt_cents = 0;
+    let holdings_by_account = account_holdings
+        .into_iter()
+        .map(|row| (row.account_id, row.market_value_cents))
+        .collect::<HashMap<_, _>>();
 
-    for account in account_balances {
-        let balance_cents = account
-            .snapshot_balance_cents
-            .unwrap_or(account.transaction_balance_cents);
+    let total_holdings_market_value = holdings_by_account.values().sum();
 
-        match account.account_type.as_str() {
-            "checking" | "savings" | "cash" | "manual" => {
-                cash_cents += balance_cents;
-            }
-            "credit_card" => {
-                if balance_cents < 0 {
-                    debt_cents += balance_cents.abs();
-                } else {
-                    debt_cents += balance_cents;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let net_worth_cents = cash_cents + investment_value_cents - debt_cents;
-
-    Ok(CurrentNetWorth {
-        cash_cents,
-        investment_value_cents,
-        debt_cents,
-        net_worth_cents,
-    })
+    Ok(compute_net_worth_components(
+        &account_balances,
+        &holdings_by_account,
+        total_holdings_market_value,
+    ))
 }
 
 pub async fn create_today_portfolio_snapshot(
@@ -163,7 +213,9 @@ pub async fn get_net_worth_timeline(
     pool: &PgPool,
     user_id: Uuid,
 ) -> Result<Vec<PortfolioSnapshot>, sqlx::Error> {
-    let mut snapshots = sqlx::query_as::<_, PortfolioSnapshot>(
+    create_today_portfolio_snapshot(pool, user_id).await?;
+
+    sqlx::query_as::<_, PortfolioSnapshot>(
         r#"
         SELECT
             id,
@@ -182,11 +234,91 @@ pub async fn get_net_worth_timeline(
     )
     .bind(user_id)
     .fetch_all(pool)
-    .await?;
+    .await
+}
 
-    if snapshots.is_empty() {
-        snapshots.push(create_today_portfolio_snapshot(pool, user_id).await?);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn account(
+        account_type: &str,
+        snapshot_balance_cents: Option<i64>,
+        transaction_balance_cents: i64,
+    ) -> AccountBalanceInput {
+        AccountBalanceInput {
+            account_id: Uuid::new_v4(),
+            account_type: account_type.to_string(),
+            snapshot_balance_cents,
+            transaction_balance_cents,
+        }
     }
 
-    Ok(snapshots)
+    #[test]
+    fn net_worth_includes_holdings_and_cash_minus_debt() {
+        let checking = account("checking", Some(10_000_00), 0);
+        let credit = account("credit_card", Some(-2_000_00), 0);
+        let holdings_by_account = HashMap::from([(Uuid::new_v4(), 5_000_00)]);
+
+        let net_worth =
+            compute_net_worth_components(&[checking, credit], &holdings_by_account, 5_000_00);
+
+        assert_eq!(net_worth.cash_cents, 10_000_00);
+        assert_eq!(net_worth.investment_value_cents, 5_000_00);
+        assert_eq!(net_worth.debt_cents, 2_000_00);
+        assert_eq!(net_worth.net_worth_cents, 13_000_00);
+    }
+
+    #[test]
+    fn brokerage_balance_without_holdings_counts_as_investments() {
+        let brokerage_id = Uuid::new_v4();
+        let brokerage = AccountBalanceInput {
+            account_id: brokerage_id,
+            account_type: "brokerage".to_string(),
+            snapshot_balance_cents: Some(16_962_87),
+            transaction_balance_cents: 0,
+        };
+
+        let net_worth = compute_net_worth_components(&[brokerage], &HashMap::new(), 0);
+
+        assert_eq!(net_worth.investment_value_cents, 16_962_87);
+        assert_eq!(net_worth.cash_cents, 0);
+        assert_eq!(net_worth.net_worth_cents, 16_962_87);
+    }
+
+    #[test]
+    fn brokerage_uses_holdings_and_adds_uninvested_cash_only() {
+        let brokerage_id = Uuid::new_v4();
+        let brokerage = AccountBalanceInput {
+            account_id: brokerage_id,
+            account_type: "brokerage".to_string(),
+            snapshot_balance_cents: Some(17_582_87),
+            transaction_balance_cents: 0,
+        };
+        let holdings_by_account = HashMap::from([(brokerage_id, 16_962_87)]);
+
+        let net_worth = compute_net_worth_components(&[brokerage], &holdings_by_account, 16_962_87);
+
+        assert_eq!(net_worth.investment_value_cents, 16_962_87);
+        assert_eq!(net_worth.cash_cents, 620_00);
+        assert_eq!(net_worth.net_worth_cents, 17_582_87);
+    }
+
+    #[test]
+    fn brokerage_with_matching_holdings_avoids_double_counting() {
+        let brokerage_id = Uuid::new_v4();
+        let brokerage = AccountBalanceInput {
+            account_id: brokerage_id,
+            account_type: "brokerage".to_string(),
+            snapshot_balance_cents: Some(16_962_87),
+            transaction_balance_cents: 0,
+        };
+        let holdings_by_account = HashMap::from([(brokerage_id, 16_962_87)]);
+
+        let net_worth = compute_net_worth_components(&[brokerage], &holdings_by_account, 16_962_87);
+
+        assert_eq!(net_worth.investment_value_cents, 16_962_87);
+        assert_eq!(net_worth.cash_cents, 0);
+        assert_eq!(net_worth.net_worth_cents, 16_962_87);
+    }
 }
